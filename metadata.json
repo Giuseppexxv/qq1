@@ -1,0 +1,8 @@
+{
+  "name": "Liquid Stremio",
+  "description": "Web-based Stremio client supporting Stremio add-ons, integrated torrent streaming, and a Liquid Glass interface.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
