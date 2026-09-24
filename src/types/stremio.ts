@@ -66,6 +66,9 @@ export interface StremioMetaDetail extends StremioMetaPreview {
   director?: string[];
   writer?: string[];
   awards?: string;
+  country?: string;
+  language?: string;
+  tagline?: string;
   trailers?: { source: string; type: string }[];
   videos?: StremioVideo[];
   website?: string;
@@ -106,36 +109,6 @@ export interface InstalledAddon {
   icon?: string;
 }
 
-export interface TorrentFileItem {
-  name: string;
-  path: string;
-  length: number;
-  progress: number;
-  downloaded: number;
-  selected: boolean;
-  fileIndex: number;
-}
-
-export interface ActiveTorrent {
-  id: string;
-  name: string;
-  infoHash: string;
-  magnetURI: string;
-  downloadSpeed: number; // bytes/sec
-  uploadSpeed: number;
-  progress: number; // 0 to 1
-  downloaded: number;
-  length: number;
-  numPeers: number;
-  timeRemaining: number;
-  files: TorrentFileItem[];
-  ready: boolean;
-  paused: boolean;
-  error?: string;
-  selectedFileIndex?: number;
-  videoStreamUrl?: string;
-}
-
 export interface WatchHistoryItem {
   id: string;
   type: string;
@@ -151,4 +124,4 @@ export interface WatchHistoryItem {
   episode?: number;
 }
 
-export type ViewTab = 'discover' | 'movies' | 'series' | 'library' | 'torrents' | 'addons';
+export type ViewTab = 'discover' | 'movies' | 'series' | 'library';

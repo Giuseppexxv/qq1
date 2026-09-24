@@ -167,10 +167,10 @@ async function startServer() {
 
       // For binary media (TS segments, MP4, WebM, audio chunks), stream directly
       res.status(response.status);
-      if (contentType) {
-        res.setHeader("Content-Type", contentType);
-      } else if (targetUrl.includes(".ts")) {
+      if (targetUrl.includes("/video/") || targetUrl.includes("/audio/") || targetUrl.includes(".ts")) {
         res.setHeader("Content-Type", "video/mp2t");
+      } else if (contentType) {
+        res.setHeader("Content-Type", contentType);
       } else {
         res.setHeader("Content-Type", "video/mp4");
       }
@@ -203,6 +203,295 @@ async function startServer() {
     }
   });
 
+  // Dedicated hidden official catalog route with high-performance in-memory cache
+  const INTERNAL_CATALOG_BASE = "https://easycatalogs.realbestia.com/ad49acf3-15c8-4151-94f3-0630eeba1dce";
+  const catalogMemoryCache = new Map<string, { body: string; contentType: string; expires: number }>();
+
+  app.use("/api/addon/catalog", async (req, res) => {
+    try {
+      const subPath = req.url; // e.g. /manifest.json, /catalog/..., /meta/...
+      const cacheKey = `cat_${subPath}`;
+      const cached = catalogMemoryCache.get(cacheKey);
+      const now = Date.now();
+
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Content-Type", "application/json");
+
+      if (cached && cached.expires > now) {
+        res.setHeader("X-Cache", "HIT");
+        res.setHeader("Cache-Control", "public, max-age=1800");
+        return res.send(cached.body);
+      }
+
+      const targetUrl = `${INTERNAL_CATALOG_BASE}${subPath}`;
+      const response = await fetch(targetUrl, {
+        method: "GET",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+          "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        },
+        signal: AbortSignal.timeout(18000),
+      });
+
+      if (!response.ok) {
+        return res.status(response.status).json({ error: "Failed to fetch from catalog" });
+      }
+
+      if (subPath === "/manifest.json" || subPath.startsWith("/manifest.json")) {
+        const text = await response.text();
+        try {
+          const json = JSON.parse(text);
+          json.id = "official.catalog";
+          json.name = "Catalogo Cinema & Serie TV";
+          json.description = "Catalogo ufficiale con schede informative e trame in lingua italiana.";
+          const modifiedText = JSON.stringify(json);
+          catalogMemoryCache.set(cacheKey, {
+            body: modifiedText,
+            contentType: "application/json",
+            expires: now + 24 * 60 * 60 * 1000,
+          });
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.send(modifiedText);
+        } catch {
+          return res.send(text);
+        }
+      }
+
+      const data = await response.text();
+      // Cache meta and catalog responses
+      const ttl = subPath.includes("/meta/") ? 24 * 60 * 60 * 1000 : 30 * 60 * 1000;
+      catalogMemoryCache.set(cacheKey, {
+        body: data,
+        contentType: "application/json",
+        expires: now + ttl,
+      });
+
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      res.send(data);
+    } catch (err: any) {
+      console.warn(`[Catalog Proxy Error] for ${req.url}:`, err.message);
+      res.status(502).json({ error: "Catalog fetch failed", message: err.message });
+    }
+  });
+
+  // Dedicated hidden official stream addon route with in-memory caching
+  const INTERNAL_STREAM_BASE = "https://toastflix.stremio-italia.eu/eyJhaW9zdHJlYW1zTW9kZSI6dHJ1ZX0";
+  const streamMemoryCache = new Map<string, { body: string; expires: number }>();
+
+  // Server-Side direct extractor for Vixsrc (StreamingCommunity) HD Italian streams
+  // Bypasses the need for Stremio Desktop local proxy (127.0.0.1:11470)
+  async function resolveVixsrcStream(type: string, id: string): Promise<any | null> {
+    try {
+      let apiPath = "";
+      if (type === "series") {
+        const parts = id.split(":");
+        const imdbId = parts[0];
+        const season = parts[1] || "1";
+        const episode = parts[2] || "1";
+        apiPath = `/api/tv/${imdbId}/${season}/${episode}?lang=it`;
+      } else {
+        const imdbId = id.split(":")[0];
+        apiPath = `/api/movie/${imdbId}?lang=it`;
+      }
+
+      const headers = {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept: "application/json, text/plain, */*",
+        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        Referer: "https://vixsrc.to/",
+        Origin: "https://vixsrc.to",
+      };
+
+      const r1 = await fetch(`https://vixsrc.to${apiPath}`, {
+        headers,
+        signal: AbortSignal.timeout(9000),
+      });
+      if (!r1.ok) return null;
+      const data = await r1.json();
+      if (!data.src) return null;
+
+      const r2 = await fetch(`https://vixsrc.to${data.src}`, {
+        headers,
+        signal: AbortSignal.timeout(9000),
+      });
+      if (!r2.ok) return null;
+      const html = await r2.text();
+
+      let tokenV: string | null = null;
+      let expiresV: string | null = null;
+      let urlV: string | null = null;
+
+      const mp = html.match(
+        /window\.masterPlaylist\s*=\s*\{[\s\S]*?params\s*:\s*\{([\s\S]*?)\}\s*,\s*url\s*:\s*['"]([^'"]+)['"]/
+      );
+      if (mp) {
+        const params = mp[1];
+        urlV = mp[2].replace(/\\/g, "");
+        const tM = params.match(/['"]token['"]\s*:\s*['"]([^'"]+)['"]/);
+        const eM = params.match(/['"]expires['"]\s*:\s*['"]([^'"]+)['"]/);
+        if (tM) tokenV = tM[1];
+        if (eM) expiresV = eM[1];
+      }
+
+      if (!tokenV) {
+        const t = html.match(/'token'\s*:\s*'([^']+)'/) || html.match(/"token"\s*:\s*"([^"]+)"/);
+        if (t) tokenV = t[1];
+      }
+      if (!expiresV) {
+        const e = html.match(/'expires'\s*:\s*'([^']+)'/) || html.match(/"expires"\s*:\s*"([^"]+)"/);
+        if (e) expiresV = e[1];
+      }
+      if (!urlV) {
+        const u = html.match(/url\s*:\s*'([^']+)'/) || html.match(/url\s*:\s*"([^"]+)"/);
+        if (u) urlV = u[1].replace(/\\/g, "");
+      }
+
+      const canPlayFHD = /window\.canPlayFHD\s*=\s*true/.test(html);
+
+      if (!urlV || !tokenV || !expiresV) {
+        return null;
+      }
+
+      let playlistUrl = urlV.includes("?")
+        ? `${urlV}&token=${tokenV}&expires=${expiresV}${canPlayFHD ? "&h=1" : ""}`
+        : `${urlV}?token=${tokenV}&expires=${expiresV}${canPlayFHD ? "&h=1" : ""}`;
+      playlistUrl = playlistUrl.replace("?", ".m3u8?");
+
+      return {
+        name: "ToastFlix HD 1080p",
+        title: "🎬 Streaming HD 1080p • Audio Italiano 🇮🇹",
+        url: playlistUrl,
+        behaviorHints: {
+          notWebReady: true,
+          proxyHeaders: {
+            request: {
+              "User-Agent": headers["User-Agent"],
+              Accept: "*/*",
+              "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+              Referer: "https://vixsrc.to/",
+              Origin: "https://vixsrc.to",
+            },
+          },
+        },
+      };
+    } catch (err: any) {
+      console.warn(`[Vixsrc Resolver Error] for ${type}/${id}:`, err.message);
+      return null;
+    }
+  }
+
+  app.use("/api/addon/stream", async (req, res) => {
+    try {
+      let subPath = req.url;
+      if (!subPath.startsWith("/")) subPath = `/${subPath}`;
+
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Content-Type", "application/json");
+
+      if (req.method === "OPTIONS") {
+        return res.sendStatus(200);
+      }
+
+      if (subPath === "/manifest.json" || subPath.startsWith("/manifest.json")) {
+        return res.json({
+          id: "official.stream",
+          version: "3.0.0",
+          name: "Flussi Video Ufficiali",
+          description: "Flussi di riproduzione video in lingua italiana",
+          types: ["movie", "series"],
+          catalogs: [],
+          resources: ["stream"],
+          idPrefixes: ["tt", "kitsu", "tmdb"]
+        });
+      }
+
+      const cacheKey = `str_${subPath}`;
+      const cached = streamMemoryCache.get(cacheKey);
+      const now = Date.now();
+      if (cached && cached.expires > now) {
+        res.setHeader("X-Cache", "HIT");
+        return res.send(cached.body);
+      }
+
+      const streamMatch = subPath.match(/^\/stream\/([^/]+)\/([^.]+)\.json$/);
+      let targetType = "";
+      let targetId = "";
+      if (streamMatch) {
+        targetType = streamMatch[1];
+        targetId = streamMatch[2];
+      }
+
+      const targetUrl = `${INTERNAL_STREAM_BASE}${subPath}`;
+
+      // Start Vixsrc resolution immediately
+      const vixsrcPromise = targetType && targetId ? resolveVixsrcStream(targetType, targetId) : Promise.resolve(null);
+
+      // Fetch upstream ToastFlix with a fast 2500ms timeout
+      const upstreamPromise = fetch(targetUrl, {
+        method: "GET",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+          "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        },
+        signal: AbortSignal.timeout(2500),
+      }).catch(() => null);
+
+      // Race/settle: If Vixsrc resolves quickly, or when both settle
+      const [vixsrcResult, upstreamResult] = await Promise.allSettled([
+        vixsrcPromise,
+        upstreamPromise,
+      ]);
+
+      const streams: any[] = [];
+
+      // 1. If direct Vixsrc stream resolved, place it as primary high-priority stream
+      if (vixsrcResult.status === "fulfilled" && vixsrcResult.value) {
+        streams.push(vixsrcResult.value);
+      }
+
+      // 2. Parse upstream ToastFlix streams if available
+      if (upstreamResult.status === "fulfilled" && upstreamResult.value && upstreamResult.value.ok) {
+        try {
+          const upstreamData = await upstreamResult.value.json();
+          if (Array.isArray(upstreamData.streams)) {
+            for (const s of upstreamData.streams) {
+              if (s.url && s.url.length > 0) {
+                streams.push(s);
+              } else if (s.externalUrl && !s.externalUrl.includes("/extractor/css")) {
+                streams.push(s);
+              }
+            }
+          }
+        } catch {
+          // ignore json parse error
+        }
+      }
+
+      const responsePayload = JSON.stringify({ streams });
+
+      if (streams.length > 0) {
+        streamMemoryCache.set(cacheKey, {
+          body: responsePayload,
+          expires: now + 30 * 60 * 1000,
+        });
+      }
+
+      res.send(responsePayload);
+    } catch (err: any) {
+      console.warn(`[Stream Proxy Error] for ${req.url}:`, err.message);
+      res.json({ streams: [] });
+    }
+  });
+
   // API: Stremio Add-on Server-Side Proxy
   // Bypasses browser CORS restrictions, Cloudflare preflight 405s, and rate limits
   app.get("/api/stremio-proxy", async (req, res) => {
@@ -225,14 +514,10 @@ async function startServer() {
         "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
       };
 
-      // Timeout set to 25s for slow scrapers like ToastFlix, with fallback handling
-      const isToastflix = targetUrl.includes("toastflix");
-      const timeoutMs = isToastflix ? 25000 : 15000;
-
       const response = await fetch(targetUrl, {
         method: "GET",
         headers,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(20000),
       });
 
       // Forward status and CORS headers
@@ -291,7 +576,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Liquid Stremio] Full-stack server running on http://0.0.0.0:${PORT}`);
+    console.log(`[IStream] Full-stack server running on http://0.0.0.0:${PORT}`);
   });
 }
 

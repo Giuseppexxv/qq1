@@ -6,86 +6,86 @@ import {
   StremioStream,
   StremioSubtitle,
 } from '../types/stremio';
-import { OPEN_MEDIA_CATALOG } from '../data/openMediaCatalog';
 
-const ADDONS_STORAGE_KEY = 'liquid_stremio_addons_v2';
+const ADDONS_STORAGE_KEY = 'liquid_stremio_addons_v4';
 const HISTORY_STORAGE_KEY = 'liquid_stremio_history_v1';
 const LIBRARY_STORAGE_KEY = 'liquid_stremio_library_v1';
+const CATALOG_CACHE_KEY = 'liquid_stremio_catalog_cache_v4';
 
 export const DEFAULT_ADDONS: InstalledAddon[] = [
   {
-    id: 'community.cinemeta',
-    name: 'Cinemeta (Official)',
-    version: '3.0.12',
-    description: 'Official IMDb/TheMovieDb metadata aggregator for movies and TV series catalog & search.',
-    transportUrl: 'https://v3-cinemeta.strem.io',
+    id: 'official.catalog',
+    name: 'Catalogo Cinema & Serie TV',
+    version: '1.1.3',
+    description: 'Catalogo multimediale ufficiale con schede informative, trame in italiano e locandine in alta definizione.',
+    transportUrl: '/api/addon/catalog',
     enabled: true,
     isOfficial: true,
-    icon: 'https://v3-cinemeta.strem.io/favicon.ico',
     manifest: {
-      id: 'community.cinemeta',
-      name: 'Cinemeta',
-      version: '3.0.12',
-      description: 'Official IMDb and TV metadata catalog for Stremio',
+      id: 'official.catalog',
+      name: 'Catalogo Cinema & Serie TV',
+      version: '1.1.3',
+      description: 'Catalogo multimediale ufficiale con schede informative, trame in italiano e locandine in alta definizione.',
       types: ['movie', 'series'],
-      resources: ['catalog', 'meta'],
-      catalogs: [
-        { type: 'movie', id: 'top', name: 'Popular Movies' },
-        { type: 'series', id: 'top', name: 'Popular TV Series' },
-        { type: 'movie', id: 'year', name: 'New Releases' },
-        { type: 'series', id: 'year', name: 'New Series' },
-        { type: 'movie', id: 'imdbRating', name: 'Top Rated Movies' },
-        { type: 'series', id: 'imdbRating', name: 'Top Rated Series' },
+      resources: [
+        'catalog',
+        { name: 'meta', types: ['movie', 'series'], idPrefixes: ['tmdb', 'tt', 'kitsu'] },
+        { name: 'stream', types: ['movie', 'series'], idPrefixes: ['tmdb', 'tt', 'kitsu'] },
       ],
+      catalogs: [
+        { type: 'movie', id: 't10.movie.top10', name: 'Top 10 Italia' },
+        { type: 'series', id: 't10.series.top10', name: 'Top 10 Italia' },
+        { type: 'movie', id: 'tmdb.movie.now_playing', name: 'Al Cinema' },
+        { type: 'movie', id: 'tmdb.movie.trending', name: 'Film di Tendenza' },
+        { type: 'series', id: 'tmdb.series.trending', name: 'Serie TV di Tendenza' },
+        { type: 'movie', id: 'tmdb.movie.popular', name: 'Film Popolari' },
+        { type: 'series', id: 'tmdb.series.popular', name: 'Serie TV Popolari' },
+        { type: 'movie', id: 'tmdb.movie.top_rated', name: 'Film Più Votati' },
+        { type: 'series', id: 'tmdb.series.top_rated', name: 'Serie TV Più Votate' },
+        { type: 'movie', id: 'tmdb.movie.upcoming', name: 'In Arrivo' },
+        { type: 'series', id: 'tmdb.series.upcoming', name: 'In Onda' },
+        { type: 'movie', id: 'tmdb.movie.netflix', name: 'Netflix Original Film' },
+        { type: 'series', id: 'tmdb.series.netflix', name: 'Netflix Original Serie' },
+        { type: 'movie', id: 'tmdb.movie.amazon', name: 'Prime Video Film' },
+        { type: 'series', id: 'tmdb.series.amazon', name: 'Prime Video Serie' },
+        { type: 'movie', id: 'tmdb.movie.disney', name: 'Disney+ Film' },
+        { type: 'series', id: 'tmdb.series.disney', name: 'Disney+ Serie' },
+        { type: 'movie', id: 'tmdb.movie.apple', name: 'Apple TV+ Film' },
+        { type: 'series', id: 'tmdb.series.apple', name: 'Apple TV+ Serie' },
+        { type: 'movie', id: 'tmdb.movie.hbo', name: 'HBO Max Film' },
+        { type: 'series', id: 'tmdb.series.hbo', name: 'HBO Max Serie' },
+        { type: 'movie', id: 'tmdb.movie.paramount', name: 'Paramount+ Film' },
+        { type: 'series', id: 'tmdb.series.paramount', name: 'Paramount+ Serie' },
+        { type: 'movie', id: 'tmdb.movie.search', name: 'Ricerca Film' },
+        { type: 'series', id: 'tmdb.series.search', name: 'Ricerca Serie' },
+      ],
+      idPrefixes: ['tmdb', 'tt', 'kitsu'],
     },
   },
   {
-    id: 'toastflix.addon.it',
-    name: '🥪 ToastFlix (Direct ITA)',
+    id: 'official.stream',
+    name: 'Flussi Video Ufficiali',
     version: '3.0.0',
-    description: 'Streaming diretto in Italiano e Dual Audio (Direct / Nuvio / No Torrent) da toastflix.stremio-italia.eu',
-    transportUrl: 'https://toastflix.stremio-italia.eu/eyJzb2xvRGlyZWN0Ijp0cnVlLCJkaXJlY3REdWFsIjp0cnVlLCJudXZpb0ZyaWVuZGx5Ijp0cnVlfQ',
+    description: 'Flussi video streaming in lingua italiana ad alta definizione.',
+    transportUrl: '/api/addon/stream',
     enabled: true,
-    isOfficial: false,
-    icon: 'https://toastflix.stremio-italia.eu/toast-stream-logo.png',
+    isOfficial: true,
     manifest: {
-      id: 'toastflix.addon.it',
-      name: '🥪ToastFlix🥪 4 🄺 + 🎯 + 🎯 + 🐌',
+      id: 'official.stream',
+      name: 'Flussi Video Ufficiali',
       version: '3.0.0',
-      description: 'Streaming in Italiano (Direct Streams)',
-      logo: 'https://toastflix.stremio-italia.eu/toast-stream-logo.png',
+      description: 'Flussi video streaming in lingua italiana',
       types: ['movie', 'series'],
       resources: ['stream'],
       catalogs: [],
-      idPrefixes: ['tt', 'kitsu'],
-      behaviorHints: { configurable: true },
-    },
-  },
-  {
-    id: 'org.liquid.openwebtorrent',
-    name: 'Open Cinema WebTorrent',
-    version: '1.2.0',
-    description: 'Built-in open torrent engine providing 4K/1080p Creative Commons & Public Domain media with WebRTC seeds.',
-    transportUrl: 'local://openwebtorrent',
-    enabled: true,
-    isOfficial: true,
-    manifest: {
-      id: 'org.liquid.openwebtorrent',
-      name: 'Open Cinema WebTorrent',
-      version: '1.2.0',
-      description: 'Open source media swarms with WebTorrent P2P streaming',
-      types: ['movie'],
-      resources: ['catalog', 'meta', 'stream'],
-      catalogs: [
-        { type: 'movie', id: 'open_swarms', name: 'WebTorrent P2P Classics' },
-      ],
+      idPrefixes: ['tt', 'kitsu', 'tmdb'],
     },
   },
   {
     id: 'org.stremio.opensubtitles',
     name: 'OpenSubtitles v3',
     version: '3.0.0',
-    description: 'Official multilingual subtitles provider directly from OpenSubtitles.org.',
+    description: 'Sottotitoli multilingua ufficiali da OpenSubtitles.org.',
     transportUrl: 'https://opensubtitles-v3.strem.io',
     enabled: true,
     isOfficial: true,
@@ -93,27 +93,9 @@ export const DEFAULT_ADDONS: InstalledAddon[] = [
       id: 'org.stremio.opensubtitles',
       name: 'OpenSubtitles v3',
       version: '3.0.0',
-      description: 'Official subtitles for movies and series',
+      description: 'Sottotitoli per film e serie TV',
       types: ['movie', 'series'],
       resources: ['subtitles'],
-      catalogs: [],
-    },
-  },
-  {
-    id: 'com.linvo.watchhub',
-    name: 'WatchHub',
-    version: '1.0.0',
-    description: 'Aggregates official streaming providers and external stream destinations.',
-    transportUrl: 'https://watchhub.strem.io',
-    enabled: true,
-    isOfficial: true,
-    manifest: {
-      id: 'com.linvo.watchhub',
-      name: 'WatchHub',
-      version: '1.0.0',
-      description: 'Official provider streams aggregator',
-      types: ['movie', 'series'],
-      resources: ['stream'],
       catalogs: [],
     },
   },
@@ -122,39 +104,25 @@ export const DEFAULT_ADDONS: InstalledAddon[] = [
 // Popular Community Add-ons for 1-Click Install
 export const POPULAR_COMMUNITY_ADDONS = [
   {
-    id: 'toastflix.addon.it',
-    name: '🥪 ToastFlix (Direct ITA)',
-    description: 'Flussi diretti in lingua Italiana e Dual Audio (No Torrent/No Proxy) da toastflix.stremio-italia.eu',
-    manifestUrl: 'https://toastflix.stremio-italia.eu/eyJzb2xvRGlyZWN0Ijp0cnVlLCJkaXJlY3REdWFsIjp0cnVlLCJudXZpb0ZyaWVuZGx5Ijp0cnVlfQ/manifest.json',
-    types: ['movie', 'series'],
-  },
-  {
     id: 'org.stremio.anime-kitsu',
     name: 'Anime Kitsu',
-    description: 'Discover trending anime series, OVAs, and movies powered by Kitsu.io.',
+    description: 'Scopri anime di tendenza, serie animate e film powered by Kitsu.io.',
     manifestUrl: 'https://anime-kitsu.strem.fun/manifest.json',
     types: ['series', 'movie'],
   },
   {
     id: 'com.stremio.youtube',
     name: 'YouTube Channels',
-    description: 'Watch public YouTube channel feeds and trending video streams in Stremio.',
+    description: 'Guarda feed di canali pubblici YouTube e video di tendenza.',
     manifestUrl: 'https://youtube.strem.io/manifest.json',
     types: ['other', 'channel'],
-  },
-  {
-    id: 'org.stremio.public-domain',
-    name: 'Public Domain Movies',
-    description: 'Curated public domain and archive cinema collection with legal streams.',
-    manifestUrl: 'https://v3-cinemeta.strem.io/manifest.json',
-    types: ['movie'],
   },
 ];
 
 class StremioService {
   private addons: InstalledAddon[] = [];
 
-  // High-performance caches (in-memory + local storage for instant cold starts)
+  // High-performance caches
   private catalogCache = new Map<string, { data: StremioMetaPreview[]; expires: number }>();
   private metaCache = new Map<string, { data: StremioMetaDetail; expires: number }>();
   private streamCache = new Map<string, { data: StremioStream[]; expires: number }>();
@@ -166,7 +134,7 @@ class StremioService {
 
   private loadPersistentCatalogCache() {
     try {
-      const stored = localStorage.getItem('liquid_stremio_catalog_cache_v2');
+      const stored = localStorage.getItem(CATALOG_CACHE_KEY);
       if (stored) {
         const parsed: Record<string, { data: StremioMetaPreview[]; expires: number }> = JSON.parse(stored);
         const now = Date.now();
@@ -190,9 +158,9 @@ class StremioService {
           obj[key] = val;
         }
       });
-      localStorage.setItem('liquid_stremio_catalog_cache_v2', JSON.stringify(obj));
+      localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(obj));
     } catch (e) {
-      // Quota exceeded or private browsing
+      // ignore
     }
   }
 
@@ -212,27 +180,43 @@ class StremioService {
 
   private loadAddons() {
     try {
-      const stored = localStorage.getItem(ADDONS_STORAGE_KEY) || localStorage.getItem('liquid_stremio_addons_v1');
+      const stored = localStorage.getItem(ADDONS_STORAGE_KEY);
       if (stored) {
         const parsed: InstalledAddon[] = JSON.parse(stored);
-        // Automatically merge new default addons like Toastflix and update outdated configurations
-        const merged = [...parsed];
-        for (const def of DEFAULT_ADDONS) {
-          const existingIdx = merged.findIndex((m) => m.id === def.id);
-          if (existingIdx === -1) {
-            merged.push(def);
-          } else if (def.id === 'toastflix.addon.it') {
-            // Always ensure ToastFlix has the working transportUrl, is enabled, and official-styled
-            merged[existingIdx] = {
-              ...merged[existingIdx],
-              name: def.name,
-              transportUrl: def.transportUrl,
-              enabled: true,
-              manifest: def.manifest,
-            };
-          }
+        // Exclude removed legacy addons
+        const filtered = parsed.filter(
+          (a) =>
+            a.id !== 'community.cinemeta' &&
+            a.id !== 'toastflix.addon.it' &&
+            a.id !== 'com.linvo.watchhub'
+        );
+
+        // Ensure official catalog is present and configured
+        const hasOfficial = filtered.some((a) => a.id === 'official.catalog');
+        if (!hasOfficial) {
+          filtered.unshift(DEFAULT_ADDONS[0]);
+        } else {
+          const idx = filtered.findIndex((a) => a.id === 'official.catalog');
+          filtered[idx] = {
+            ...DEFAULT_ADDONS[0],
+            enabled: true,
+          };
         }
-        this.addons = merged;
+
+        // Ensure official stream addon is present and configured
+        const streamAddonDef = DEFAULT_ADDONS.find((a) => a.id === 'official.stream')!;
+        const hasOfficialStream = filtered.some((a) => a.id === 'official.stream');
+        if (!hasOfficialStream) {
+          filtered.push(streamAddonDef);
+        } else {
+          const idx = filtered.findIndex((a) => a.id === 'official.stream');
+          filtered[idx] = {
+            ...streamAddonDef,
+            enabled: true,
+          };
+        }
+
+        this.addons = filtered;
         this.saveAddons();
       } else {
         this.addons = DEFAULT_ADDONS;
@@ -269,7 +253,6 @@ class StremioService {
 
     let manifest: StremioManifest;
     try {
-      // Try internal proxy first
       const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(normalized)}`;
       const resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
       if (!resp.ok) throw new Error(`Proxy responded with ${resp.status}`);
@@ -279,16 +262,8 @@ class StremioService {
         const resp = await fetch(normalized, { signal: AbortSignal.timeout(8000) });
         if (!resp.ok) throw new Error(`Direct fetch responded with ${resp.status}`);
         manifest = await resp.json();
-      } catch (directErr) {
-        // Try with allorigins as last fallback
-        try {
-          const publicProxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(normalized)}`;
-          const resp = await fetch(publicProxy, { signal: AbortSignal.timeout(8000) });
-          if (!resp.ok) throw new Error('Public proxy failed');
-          manifest = await resp.json();
-        } catch (proxyErr) {
-          throw new Error(`Unable to fetch manifest: ${err.message || 'Network/CORS error'}`);
-        }
+      } catch {
+        throw new Error(`Unable to fetch manifest: ${err.message || 'Network/CORS error'}`);
       }
     }
 
@@ -308,7 +283,6 @@ class StremioService {
       icon: manifest.logo || manifest.icon,
     };
 
-    // Remove existing if replacing
     this.addons = this.addons.filter((a) => a.id !== newAddon.id);
     this.addons.push(newAddon);
     this.saveAddons();
@@ -344,26 +318,9 @@ class StremioService {
       return cached.data;
     }
 
-    const addon = this.addons.find((a) => a.id === addonId && a.enabled);
+    const addon = this.addons.find((a) => a.id === addonId && a.enabled) || DEFAULT_ADDONS[0];
     if (!addon) return [];
 
-    // Handle internal Open Media WebTorrent addon
-    if (addon.transportUrl === 'local://openwebtorrent') {
-      let items = OPEN_MEDIA_CATALOG.map((m) => m.meta);
-      if (extra?.search) {
-        const q = extra.search.toLowerCase();
-        items = items.filter(
-          (m) =>
-            m.name.toLowerCase().includes(q) ||
-            m.genres?.some((g) => g.toLowerCase().includes(q))
-        );
-      }
-      this.catalogCache.set(cacheKey, { data: items, expires: now + 15 * 60 * 1000 });
-      return items;
-    }
-
-    // Build URL according to Stremio Addon Protocol v3:
-    // GET /catalog/{type}/{id}[/{extraProps}].json
     let url = `${addon.transportUrl}/catalog/${type}/${catalogId}`;
     if (extra?.search) {
       url += `/search=${encodeURIComponent(extra.search)}`;
@@ -374,26 +331,38 @@ class StremioService {
 
     try {
       let resp: Response | null = null;
-      try {
-        const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
-        resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
-      } catch {
-        resp = await fetch(url, { signal: AbortSignal.timeout(6000) }).catch(() => null);
+      if (url.startsWith('/api/') || url.startsWith('http://localhost') || (typeof window !== 'undefined' && url.startsWith(window.location.origin))) {
+        resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      } else {
+        try {
+          const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
+          resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+        } catch {
+          resp = await fetch(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+        }
       }
 
       if (!resp || !resp.ok) return [];
       const data = await resp.json();
-      const results = (data.metas || []).map((m: any) => ({
-        ...m,
-        type: m.type || type,
-      }));
+      const rawMetas = Array.isArray(data.metas) ? data.metas : [];
+      const seen = new Set<string>();
+      const results: StremioMetaPreview[] = [];
+      for (const m of rawMetas) {
+        if (!m || !m.id) continue;
+        if (!seen.has(m.id)) {
+          seen.add(m.id);
+          results.push({
+            ...m,
+            type: m.type || type,
+          });
+        }
+      }
 
-      // Cache for 30 minutes in memory and persistent storage
       this.catalogCache.set(cacheKey, { data: results, expires: now + 30 * 60 * 1000 });
       this.savePersistentCatalogCache();
       return results;
     } catch (err) {
-      console.warn(`[StremioService] Catalog fetch timed out/failed for ${url}`);
+      console.warn(`[StremioService] Catalog fetch failed for ${url}`, err);
       return [];
     }
   }
@@ -407,32 +376,31 @@ class StremioService {
       return cached.data;
     }
 
-    // Check local catalog first
-    const local = OPEN_MEDIA_CATALOG.find((m) => m.meta.id === id);
-    if (local) {
-      this.metaCache.set(cacheKey, { data: local.meta, expires: now + 60 * 60 * 1000 });
-      return local.meta;
-    }
-
-    // Query Cinemeta or any addon supporting 'meta'
     const metaAddons = this.addons.filter(
       (a) =>
         a.enabled &&
         a.manifest.resources.some((r) =>
           typeof r === 'string' ? r === 'meta' : r.name === 'meta'
-        ) &&
-        a.transportUrl.startsWith('http')
+        )
     );
+
+    if (metaAddons.length === 0) {
+      metaAddons.push(DEFAULT_ADDONS[0]);
+    }
 
     for (const addon of metaAddons) {
       try {
         const url = `${addon.transportUrl}/meta/${type}/${id}.json`;
         let resp: Response | null = null;
-        try {
-          const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
-          resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
-        } catch {
-          resp = await fetch(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+        if (url.startsWith('/api/') || (typeof window !== 'undefined' && url.startsWith(window.location.origin))) {
+          resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        } else {
+          try {
+            const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
+            resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+          } catch {
+            resp = await fetch(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+          }
         }
 
         if (resp && resp.ok) {
@@ -467,34 +435,28 @@ class StremioService {
 
     const allStreams: StremioStream[] = [];
 
-    // 1. Check local catalog immediately (instant 0ms)
-    const local = OPEN_MEDIA_CATALOG.find((m) => m.meta.id === id);
-    if (local && local.streams.length > 0) {
-      allStreams.push(...local.streams);
-      if (onBatch) onBatch(local.streams, 'Local Open WebTorrent');
-    }
-
-    // 2. Query all active addons that declare 'stream' resource concurrently
+    // Query all active addons that declare 'stream' resource
     const streamAddons = this.addons.filter(
       (a) =>
         a.enabled &&
         a.manifest.resources.some((r) =>
           typeof r === 'string' ? r === 'stream' : r.name === 'stream'
-        ) &&
-        a.transportUrl.startsWith('http')
+        )
     );
 
     const promises = streamAddons.map(async (addon) => {
       try {
         const url = `${addon.transportUrl}/stream/${type}/${id}.json`;
         let resp: Response | null = null;
-        try {
-          // Prefer local Express proxy to bypass browser CORS & origin headers
-          const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
-          resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(26000) });
-        } catch {
-          // Fallback to direct fetch
-          resp = await fetch(url, { signal: AbortSignal.timeout(26000) }).catch(() => null);
+        if (url.startsWith('/api/') || (typeof window !== 'undefined' && url.startsWith(window.location.origin))) {
+          resp = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        } else {
+          try {
+            const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
+            resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(7000) });
+          } catch {
+            resp = await fetch(url, { signal: AbortSignal.timeout(7000) }).catch(() => null);
+          }
         }
 
         if (resp && resp.ok) {
@@ -512,78 +474,93 @@ class StremioService {
           }
         }
       } catch (err) {
-        // Silently skip addons that fail or have no streams for this item
+        // Silently skip addons without streams
       }
       return [];
     });
 
     await Promise.allSettled(promises);
 
-    // Helper to evaluate stream priority score (Higher score = Top priority)
     const getStreamScore = (s: StremioStream): number => {
       const name = (s.name || '').toLowerCase();
       const title = (s.title || '').toLowerCase();
       const hasUrl = !!s.url && s.url.trim().length > 0;
-      const isTorrent = !hasUrl || !!s.infoHash || name.includes('torrent');
-      const isToastflix = name.includes('toastflix') || title.includes('toastflix');
-      const isIta = isToastflix || title.includes('ita') || name.includes('ita');
+      const isIta = title.includes('ita') || name.includes('ita') || title.includes('italiano');
+      const isHD = title.includes('1080p') || title.includes('4k') || title.includes('2160p') || name.includes('1080p');
 
       let score = 0;
-      // Direct stream has highest baseline
-      if (!isTorrent && hasUrl) {
-        score += 1000;
-      }
-      // Toastflix specifically requested by user
-      if (isToastflix) {
-        score += 2000;
-      }
-      // Italian language flag
-      if (isIta) {
-        score += 500;
-      }
-      // Torrents receive lower score
-      if (isTorrent) {
-        score -= 500;
-      }
+      if (hasUrl) score += 1000;
+      if (isIta) score += 500;
+      if (isHD) score += 200;
       return score;
     };
 
-    // Sort streams: ToastFlix & Direct ITA streams come FIRST, Torrents come second
     allStreams.sort((a, b) => getStreamScore(b) - getStreamScore(a));
 
-    // 3. If it's an IMDb id and no streams were found from addons or local, provide sample video stream
-    if (allStreams.length === 0 && id.startsWith('tt')) {
-      const fallbackStream: StremioStream = {
-        name: 'Demo Video Stream',
-        title: 'Sample Direct Stream for Preview',
-        url: 'https://vjs.zencdn.net/v/oceans.mp4',
-      };
-      allStreams.push(fallbackStream);
-      if (onBatch) onBatch([fallbackStream], 'Demo Stream');
-    }
-
-    // Cache streams for 5 minutes
     if (allStreams.length > 0) {
-      this.streamCache.set(cacheKey, { data: allStreams, expires: now + 5 * 60 * 1000 });
+      this.streamCache.set(cacheKey, { data: allStreams, expires: now + 30 * 60 * 1000 });
     }
 
     return allStreams;
   }
 
-  // Fetch streams from all active addons (alias)
+  // Preload stream in background to ensure zero-wait instant playback
+  public preloadStream(type: string, id: string): void {
+    const cacheKey = `${type}_${id}`;
+    const cached = this.streamCache.get(cacheKey);
+    if (cached && cached.expires > Date.now()) return;
+    this.fetchStreams(type, id).catch(() => {});
+  }
+
   public async fetchStreams(type: string, id: string): Promise<StremioStream[]> {
     return this.fetchStreamsProgressive(type, id);
   }
 
-  // Fetch subtitles
+  // Secondary stream fallback from StreamViX addon
+  public async fetchSecondaryStreams(type: string, id: string): Promise<StremioStream[]> {
+    const secondaryBase =
+      'https://streamvix.hayd.uk/eyJkaXNhYmxlVml4c3JjIjp0cnVlLCJjYjAxRW5hYmxlZCI6ZmFsc2UsImd1YXJkYWhkRW5hYmxlZCI6dHJ1ZSwiZ3VhcmRhc2VyaWVFbmFibGVkIjpmYWxzZSwiZ3VhcmRvc2VyaWVFbmFibGVkIjp0cnVlLCJndWFyZGFmbGl4RW5hYmxlZCI6dHJ1ZSwiZGlzYWJsZUxpdmVUdiI6dHJ1ZSwiYW5pbWV1bml0eUVuYWJsZWQiOmZhbHNlLCJhbmltZXNhdHVybkVuYWJsZWQiOmZhbHNlLCJhbmltZXdvcmxkRW5hYmxlZCI6ZmFsc2UsImV1cm9zdHJlYW1pbmdFbmFibGVkIjpmYWxzZSwidG9vbml0YWxpYUVuYWJsZWQiOmZhbHNlLCJ0b29uRW5hYmxlZCI6ZmFsc2UsInZhdm9vTm9NZnBFbmFibGVkIjpmYWxzZSwibWVkaWFmbG93TWFzdGVyIjpmYWxzZSwidHJhaWxlckVuYWJsZWQiOmZhbHNlLCJmYXN0TW9kZSI6dHJ1ZX0=';
+    const targetUrl = `${secondaryBase}/stream/${type}/${id}.json`;
+    const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(targetUrl)}`;
+
+    try {
+      const resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (Array.isArray(data.streams) && data.streams.length > 0) {
+          return data.streams.map((s: any) => ({
+            ...s,
+            name: s.name ? `StreamViX - ${s.name}` : 'StreamViX HD',
+          }));
+        }
+      }
+    } catch {
+      // Direct fetch fallback if proxy has issues
+      try {
+        const directResp = await fetch(targetUrl, { signal: AbortSignal.timeout(8000) });
+        if (directResp.ok) {
+          const data = await directResp.json();
+          if (Array.isArray(data.streams)) {
+            return data.streams.map((s: any) => ({
+              ...s,
+              name: s.name ? `StreamViX - ${s.name}` : 'StreamViX HD',
+            }));
+          }
+        }
+      } catch {
+        // Silently skip
+      }
+    }
+    return [];
+  }
+
   public async fetchSubtitles(type: string, id: string): Promise<StremioSubtitle[]> {
     const subAddons = this.addons.filter(
       (a) =>
         a.enabled &&
         a.manifest.resources.some((r) =>
           typeof r === 'string' ? r === 'subtitles' : r.name === 'subtitles'
-        ) &&
-        a.transportUrl.startsWith('http')
+        )
     );
 
     const subs: StremioSubtitle[] = [];
@@ -591,11 +568,15 @@ class StremioService {
       try {
         const url = `${addon.transportUrl}/subtitles/${type}/${id}.json`;
         let resp: Response | null = null;
-        try {
-          const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
-          resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
-        } catch {
-          resp = await fetch(url, { signal: AbortSignal.timeout(6000) }).catch(() => null);
+        if (url.startsWith('/api/') || (typeof window !== 'undefined' && url.startsWith(window.location.origin))) {
+          resp = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        } else {
+          try {
+            const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
+            resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
+          } catch {
+            resp = await fetch(url, { signal: AbortSignal.timeout(6000) }).catch(() => null);
+          }
         }
         if (resp && resp.ok) {
           const data = await resp.json();

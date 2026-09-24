@@ -3,12 +3,9 @@ import { ViewTab, StremioMetaPreview, StremioMetaDetail, StremioStream, StremioV
 import { LiquidBackground } from './components/LiquidBackground';
 import { Navbar } from './components/Navbar';
 import { CatalogBrowser } from './components/CatalogBrowser';
-import { TorrentClientView } from './components/TorrentClientView';
-import { AddonManagerView } from './components/AddonManagerView';
 import { LibraryView } from './components/LibraryView';
 import { MediaDetailModal } from './components/MediaDetailModal';
 import { LiquidPlayer } from './components/LiquidPlayer';
-import { QuickMagnetModal } from './components/QuickMagnetModal';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<ViewTab>('discover');
@@ -20,26 +17,20 @@ export default function App() {
   // Active playing stream session
   const [activePlayback, setActivePlayback] = useState<{
     media: StremioMetaDetail;
-    stream: StremioStream;
+    stream?: StremioStream | null;
     video?: StremioVideo;
   } | null>(null);
 
-  // Quick Magnet modal state
-  const [isQuickMagnetOpen, setIsQuickMagnetOpen] = useState(false);
-
-  // Reload trigger for addons
-  const [addonsRefreshKey, setAddonsRefreshKey] = useState(0);
-
   const handlePlayStream = (
     media: StremioMetaDetail,
-    stream: StremioStream,
+    stream?: StremioStream,
     video?: StremioVideo
   ) => {
-    setActivePlayback({ media, stream, video });
+    setActivePlayback({ media, stream: stream || null, video });
   };
 
   return (
-    <div className="relative min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div className="relative min-h-screen bg-black text-slate-100 flex flex-col selection:bg-red-600/30 selection:text-rose-200">
       {/* Dynamic Liquid Ambient Background */}
       <LiquidBackground />
 
@@ -52,14 +43,13 @@ export default function App() {
         }}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        onOpenQuickMagnet={() => setIsQuickMagnetOpen(true)}
       />
 
       {/* Main Viewport */}
       <main className="relative z-10 flex-1">
         {(currentTab === 'discover' || currentTab === 'movies' || currentTab === 'series') && (
           <CatalogBrowser
-            key={`${currentTab}-${addonsRefreshKey}`}
+            key={currentTab}
             tab={currentTab}
             searchQuery={searchQuery}
             onSelectMedia={(item) => setSelectedMedia(item)}
@@ -71,16 +61,6 @@ export default function App() {
           <LibraryView
             onSelectMedia={(item) => setSelectedMedia(item)}
             onPlayStream={handlePlayStream}
-          />
-        )}
-
-        {currentTab === 'torrents' && (
-          <TorrentClientView onPlayStream={handlePlayStream} />
-        )}
-
-        {currentTab === 'addons' && (
-          <AddonManagerView
-            onAddonsUpdated={() => setAddonsRefreshKey((prev) => prev + 1)}
           />
         )}
       </main>
@@ -97,7 +77,7 @@ export default function App() {
         />
       )}
 
-      {/* Integrated Liquid Video Player with WebTorrent HUD */}
+      {/* Integrated Liquid Video Player */}
       {activePlayback && (
         <LiquidPlayer
           media={activePlayback.media}
@@ -106,13 +86,6 @@ export default function App() {
           onClose={() => setActivePlayback(null)}
         />
       )}
-
-      {/* Quick Magnet Modal */}
-      <QuickMagnetModal
-        isOpen={isQuickMagnetOpen}
-        onClose={() => setIsQuickMagnetOpen(false)}
-        onPlayStream={handlePlayStream}
-      />
     </div>
   );
 }
