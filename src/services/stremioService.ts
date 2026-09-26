@@ -6,60 +6,78 @@ import {
   StremioStream,
   StremioSubtitle,
 } from '../types/stremio';
+import { optimizeImageUrl } from '../utils/imageOptimizer';
 
-const ADDONS_STORAGE_KEY = 'liquid_stremio_addons_v4';
+const ADDONS_STORAGE_KEY = 'liquid_stremio_addons_v5';
 const HISTORY_STORAGE_KEY = 'liquid_stremio_history_v1';
 const LIBRARY_STORAGE_KEY = 'liquid_stremio_library_v1';
-const CATALOG_CACHE_KEY = 'liquid_stremio_catalog_cache_v4';
+const CATALOG_CACHE_KEY = 'liquid_stremio_catalog_cache_v6';
 
 export const DEFAULT_ADDONS: InstalledAddon[] = [
   {
+    id: 'topstreaming.italy',
+    name: 'TOP Streaming 🇮🇹',
+    version: '4.2.2',
+    description: 'Classifiche Top 10 ufficiali Italia da Netflix, Prime Video, Disney+, Apple TV+, NOW, Paramount+ e globali.',
+    transportUrl: '/api/addon/topstreaming',
+    enabled: true,
+    isOfficial: true,
+    icon: 'https://top-streaming.stream/logo.png',
+    manifest: {
+      id: 'topstreaming.italy',
+      name: 'TOP Streaming 🇮🇹',
+      version: '4.2.2',
+      description: 'Classifiche Top 10 ufficiali Italia: Netflix, Prime Video, Disney+, Apple TV+, NOW, Paramount+ e globali.',
+      types: ['movie', 'series'],
+      resources: ['catalog', 'meta'],
+      catalogs: [
+        { type: 'movie', id: 'popular-movie-global', name: 'Popolare - Top 10' },
+        { type: 'series', id: 'popular-series-global', name: 'Popolare - Top 10' },
+        { type: 'movie', id: 'netflix-movies-italy', name: 'Netflix - Top 10' },
+        { type: 'series', id: 'netflix-series-italy', name: 'Netflix - Top 10' },
+        { type: 'movie', id: 'amazon-prime-movies-italy', name: 'Amazon Prime Video - Top 10' },
+        { type: 'series', id: 'amazon-prime-series-italy', name: 'Amazon Prime Video - Top 10' },
+        { type: 'movie', id: 'disney-movies-italy', name: 'Disney+ - Top 10' },
+        { type: 'series', id: 'disney-series-italy', name: 'Disney+ - Top 10' },
+        { type: 'movie', id: 'apple-tv-movies-italy', name: 'Apple TV - Top 10' },
+        { type: 'series', id: 'apple-tv-series-italy', name: 'Apple TV - Top 10' },
+        { type: 'movie', id: 'now-movies-italy', name: 'NOW - Top 10' },
+        { type: 'series', id: 'now-series-italy', name: 'NOW - Top 10' },
+        { type: 'movie', id: 'paramount-plus-movies-italy', name: 'Paramount+ - Top 10' },
+        { type: 'series', id: 'paramount-plus-series-italy', name: 'Paramount+ - Top 10' },
+        { type: 'movie', id: 'hbo-max-movies-italy', name: 'HBO Max - Top 10' },
+        { type: 'series', id: 'hbo-max-series-italy', name: 'HBO Max - Top 10' },
+      ],
+      idPrefixes: ['tt', 'tmdb:', 'mal:'],
+    },
+  },
+  {
     id: 'official.catalog',
-    name: 'Catalogo Cinema & Serie TV',
-    version: '1.1.3',
-    description: 'Catalogo multimediale ufficiale con schede informative, trame in italiano e locandine in alta definizione.',
+    name: 'Cinemeta (Ufficiale)',
+    version: '3.0.14',
+    description: 'Catalogo mondiale ufficiale Stremio (Cinemeta) per film, serie TV e generi.',
     transportUrl: '/api/addon/catalog',
     enabled: true,
     isOfficial: true,
     manifest: {
       id: 'official.catalog',
-      name: 'Catalogo Cinema & Serie TV',
-      version: '1.1.3',
-      description: 'Catalogo multimediale ufficiale con schede informative, trame in italiano e locandine in alta definizione.',
+      name: 'Cinemeta (Ufficiale)',
+      version: '3.0.14',
+      description: 'Catalogo mondiale ufficiale Stremio (Cinemeta) per film, serie TV e generi.',
       types: ['movie', 'series'],
       resources: [
         'catalog',
-        { name: 'meta', types: ['movie', 'series'], idPrefixes: ['tmdb', 'tt', 'kitsu'] },
-        { name: 'stream', types: ['movie', 'series'], idPrefixes: ['tmdb', 'tt', 'kitsu'] },
+        { name: 'meta', types: ['movie', 'series'], idPrefixes: ['tt'] },
       ],
       catalogs: [
-        { type: 'movie', id: 't10.movie.top10', name: 'Top 10 Italia' },
-        { type: 'series', id: 't10.series.top10', name: 'Top 10 Italia' },
-        { type: 'movie', id: 'tmdb.movie.now_playing', name: 'Al Cinema' },
-        { type: 'movie', id: 'tmdb.movie.trending', name: 'Film di Tendenza' },
-        { type: 'series', id: 'tmdb.series.trending', name: 'Serie TV di Tendenza' },
-        { type: 'movie', id: 'tmdb.movie.popular', name: 'Film Popolari' },
-        { type: 'series', id: 'tmdb.series.popular', name: 'Serie TV Popolari' },
-        { type: 'movie', id: 'tmdb.movie.top_rated', name: 'Film Più Votati' },
-        { type: 'series', id: 'tmdb.series.top_rated', name: 'Serie TV Più Votate' },
-        { type: 'movie', id: 'tmdb.movie.upcoming', name: 'In Arrivo' },
-        { type: 'series', id: 'tmdb.series.upcoming', name: 'In Onda' },
-        { type: 'movie', id: 'tmdb.movie.netflix', name: 'Netflix Original Film' },
-        { type: 'series', id: 'tmdb.series.netflix', name: 'Netflix Original Serie' },
-        { type: 'movie', id: 'tmdb.movie.amazon', name: 'Prime Video Film' },
-        { type: 'series', id: 'tmdb.series.amazon', name: 'Prime Video Serie' },
-        { type: 'movie', id: 'tmdb.movie.disney', name: 'Disney+ Film' },
-        { type: 'series', id: 'tmdb.series.disney', name: 'Disney+ Serie' },
-        { type: 'movie', id: 'tmdb.movie.apple', name: 'Apple TV+ Film' },
-        { type: 'series', id: 'tmdb.series.apple', name: 'Apple TV+ Serie' },
-        { type: 'movie', id: 'tmdb.movie.hbo', name: 'HBO Max Film' },
-        { type: 'series', id: 'tmdb.series.hbo', name: 'HBO Max Serie' },
-        { type: 'movie', id: 'tmdb.movie.paramount', name: 'Paramount+ Film' },
-        { type: 'series', id: 'tmdb.series.paramount', name: 'Paramount+ Serie' },
-        { type: 'movie', id: 'tmdb.movie.search', name: 'Ricerca Film' },
-        { type: 'series', id: 'tmdb.series.search', name: 'Ricerca Serie' },
+        { type: 'movie', id: 'top', name: 'Film Popolari' },
+        { type: 'series', id: 'top', name: 'Serie TV Popolari' },
+        { type: 'movie', id: 'imdbRating', name: 'Film in Evidenza' },
+        { type: 'series', id: 'imdbRating', name: 'Serie TV in Evidenza' },
+        { type: 'movie', id: 'year', name: 'Nuove Uscite' },
+        { type: 'series', id: 'year', name: 'Nuove Uscite' },
       ],
-      idPrefixes: ['tmdb', 'tt', 'kitsu'],
+      idPrefixes: ['tt'],
     },
   },
   {
@@ -191,14 +209,28 @@ class StremioService {
             a.id !== 'com.linvo.watchhub'
         );
 
-        // Ensure official catalog is present and configured
+        // Ensure TOP Streaming Italia is present and configured
+        const topStreamingDef = DEFAULT_ADDONS.find((a) => a.id === 'topstreaming.italy')!;
+        const hasTopStreaming = filtered.some((a) => a.id === 'topstreaming.italy');
+        if (!hasTopStreaming) {
+          filtered.unshift(topStreamingDef);
+        } else {
+          const idx = filtered.findIndex((a) => a.id === 'topstreaming.italy');
+          filtered[idx] = {
+            ...topStreamingDef,
+            enabled: true,
+          };
+        }
+
+        // Ensure Cinemeta catalog is present and configured
+        const cinemetaDef = DEFAULT_ADDONS.find((a) => a.id === 'official.catalog')!;
         const hasOfficial = filtered.some((a) => a.id === 'official.catalog');
         if (!hasOfficial) {
-          filtered.unshift(DEFAULT_ADDONS[0]);
+          filtered.splice(1, 0, cinemetaDef);
         } else {
           const idx = filtered.findIndex((a) => a.id === 'official.catalog');
           filtered[idx] = {
-            ...DEFAULT_ADDONS[0],
+            ...cinemetaDef,
             enabled: true,
           };
         }
@@ -348,12 +380,60 @@ class StremioService {
       const seen = new Set<string>();
       const results: StremioMetaPreview[] = [];
       for (const m of rawMetas) {
-        if (!m || !m.id) continue;
-        if (!seen.has(m.id)) {
-          seen.add(m.id);
+        if (!m) continue;
+        const metaId = m.id || m.imdb_id;
+        if (!metaId) continue;
+        if (!seen.has(metaId)) {
+          seen.add(metaId);
+
+          // Extract genres: m.genres, m.genre or from m.links
+          let genres: string[] = [];
+          if (Array.isArray(m.genres) && m.genres.length > 0) {
+            genres = m.genres;
+          } else if (Array.isArray(m.genre) && m.genre.length > 0) {
+            genres = m.genre;
+          } else if (typeof m.genre === 'string' && m.genre.trim()) {
+            genres = [m.genre.trim()];
+          } else if (Array.isArray(m.links)) {
+            genres = m.links
+              .filter((l: any) => l && (l.category === 'Genres' || l.category === 'genre'))
+              .map((l: any) => l.name)
+              .filter(Boolean);
+          }
+
+          // Extract rating: m.imdbRating, m.rating, or from m.links
+          let rating = m.imdbRating || (m as any).rating;
+          if ((!rating || rating === 'N/A' || rating === '') && Array.isArray(m.links)) {
+            const imdbLink = m.links.find(
+              (l: any) =>
+                l &&
+                l.category === 'imdb' &&
+                l.name &&
+                l.name !== 'IMDb' &&
+                !isNaN(parseFloat(l.name))
+            );
+            if (imdbLink) {
+              rating = imdbLink.name;
+            }
+          }
+
+          // Extract releaseInfo: m.releaseInfo, m.year, or m.released
+          const releaseInfo =
+            m.releaseInfo || (m as any).year || (m as any).released?.slice(0, 4);
+
           results.push({
             ...m,
+            id: metaId,
             type: m.type || type,
+            poster: optimizeImageUrl(m.poster, 'poster'),
+            background: optimizeImageUrl(m.background, 'background'),
+            logo: optimizeImageUrl(m.logo, 'logo'),
+            genres,
+            releaseInfo: releaseInfo ? String(releaseInfo) : undefined,
+            imdbRating:
+              rating && rating !== 'N/A' && rating !== '' && rating !== '0'
+                ? rating
+                : undefined,
           });
         }
       }
@@ -406,8 +486,21 @@ class StremioService {
         if (resp && resp.ok) {
           const data = await resp.json();
           if (data.meta) {
-            this.metaCache.set(cacheKey, { data: data.meta, expires: now + 60 * 60 * 1000 });
-            return data.meta;
+            const meta = data.meta;
+            if (!meta.genres && meta.genre) {
+              meta.genres = Array.isArray(meta.genre) ? meta.genre : [meta.genre];
+            }
+            if (!meta.genres && Array.isArray(meta.links)) {
+              meta.genres = meta.links
+                .filter((l: any) => l && (l.category === 'Genres' || l.category === 'genre'))
+                .map((l: any) => l.name)
+                .filter(Boolean);
+            }
+            meta.poster = optimizeImageUrl(meta.poster, 'poster');
+            meta.background = optimizeImageUrl(meta.background, 'background');
+            meta.logo = optimizeImageUrl(meta.logo, 'logo');
+            this.metaCache.set(cacheKey, { data: meta, expires: now + 60 * 60 * 1000 });
+            return meta;
           }
         }
       } catch (e) {

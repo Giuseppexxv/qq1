@@ -61,6 +61,27 @@
     inset 0 1px 2px 0 rgba(255, 255, 255, 0.45);
 }
 
+/* Smoked liquid glass for light/bright covers - preserves authentic liquid glass finish with higher opacity & contrast */
+.liquid-glass-transparent-dark {
+  background: rgba(10, 10, 20, 0.78);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 8px 32px -4px rgba(0, 0, 0, 0.75),
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1px 1px 0 rgba(0, 0, 0, 0.35);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.liquid-glass-transparent-dark:hover {
+  background: rgba(14, 14, 26, 0.88);
+  border-color: rgba(255, 255, 255, 0.35);
+  box-shadow:
+    0 12px 36px -4px rgba(0, 0, 0, 0.85),
+    inset 0 1px 2px 0 rgba(255, 255, 255, 0.35);
+}
+
 .liquid-glass-dropdown {
   background: rgba(12, 12, 22, 0.72);
   backdrop-filter: blur(36px) saturate(200%);

@@ -41,6 +41,37 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'library', label: 'La Mia Libreria', icon: <Bookmark className="w-4 h-4" /> },
   ];
 
+  // Specific thematic color schemes for each navigation tab
+  const getTabActiveStyle = (id: ViewTab) => {
+    switch (id) {
+      case 'discover':
+        // Azzurrino / Cyan che induce alla scoperta ed esplorazione
+        return 'text-white bg-gradient-to-r from-sky-500 via-cyan-500 to-blue-600 border border-cyan-300/50 shadow-lg shadow-cyan-500/35 font-bold';
+      case 'movies':
+        // Rosso cinema
+        return 'text-white bg-gradient-to-r from-red-600 via-rose-600 to-red-600 border border-rose-400/50 shadow-lg shadow-red-600/35 font-bold';
+      case 'series':
+        // Viola / Violetto elettrico per le serie TV
+        return 'text-white bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 border border-purple-400/50 shadow-lg shadow-purple-600/35 font-bold';
+      case 'library':
+        // Oro ambrato caldo che incita al personale e ai contenuti preferiti
+        return 'text-white bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 border border-amber-300/50 shadow-lg shadow-amber-500/35 font-bold';
+    }
+  };
+
+  const getTabHoverStyle = (id: ViewTab) => {
+    switch (id) {
+      case 'discover':
+        return 'text-slate-300 hover:text-cyan-300 hover:bg-cyan-500/10';
+      case 'movies':
+        return 'text-slate-300 hover:text-rose-300 hover:bg-rose-500/10';
+      case 'series':
+        return 'text-slate-300 hover:text-purple-300 hover:bg-purple-500/10';
+      case 'library':
+        return 'text-slate-300 hover:text-amber-300 hover:bg-amber-500/10';
+    }
+  };
+
   return (
     <header className="fixed top-0 left-0 right-0 z-40 px-3 sm:px-6 md:px-8 py-3.5 transition-all duration-300 pointer-events-none">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 sm:gap-4 pointer-events-auto">
@@ -75,12 +106,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 id={`tab-${tab.id}`}
                 onClick={() => onSelectTab(tab.id)}
                 className={`relative flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-all duration-300 cursor-pointer ${
-                  isActive
-                    ? 'text-white bg-gradient-to-r from-red-600 to-rose-600 border border-rose-400/40 shadow-lg shadow-red-600/30 font-bold'
-                    : 'text-slate-300 hover:text-white hover:bg-white/[0.1]'
+                  isActive ? getTabActiveStyle(tab.id) : getTabHoverStyle(tab.id)
                 }`}
               >
-                <span className={isActive ? 'text-white' : 'text-slate-400'}>
+                <span className={isActive ? 'text-white' : ''}>
                   {tab.icon}
                 </span>
                 <span>{tab.label}</span>
@@ -94,11 +123,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div
             className={`relative flex items-center transition-all duration-300 liquid-glass-transparent rounded-full px-3.5 py-2 border border-white/20 shadow-2xl shadow-black/80 ${
               isSearchFocused
-                ? 'w-64 sm:w-72 ring-2 ring-red-500/50 shadow-red-600/20'
+                ? 'w-64 sm:w-72 ring-2 ring-cyan-500/50 shadow-cyan-600/20'
                 : 'w-48 sm:w-56'
             }`}
           >
-            <Search className="w-4 h-4 text-rose-400 mr-2.5 flex-shrink-0" />
+            <Search className="w-4 h-4 text-cyan-400 mr-2.5 flex-shrink-0" />
             <input
               id="search-input"
               type="text"
@@ -131,12 +160,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 key={tab.id}
                 onClick={() => onSelectTab(tab.id)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  isActive
-                    ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white font-bold border border-rose-400/40 shadow-md shadow-red-600/20'
-                    : 'text-slate-300 hover:text-white'
+                  isActive ? getTabActiveStyle(tab.id) : getTabHoverStyle(tab.id)
                 }`}
               >
-                <span className={isActive ? 'text-white' : 'text-slate-400'}>{tab.icon}</span>
+                <span className={isActive ? 'text-white' : ''}>{tab.icon}</span>
                 <span>{tab.label}</span>
               </button>
             );

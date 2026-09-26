@@ -203,13 +203,14 @@ async function startServer() {
     }
   });
 
-  // Dedicated hidden official catalog route with high-performance in-memory cache
-  const INTERNAL_CATALOG_BASE = "https://easycatalogs.realbestia.com/ad49acf3-15c8-4151-94f3-0630eeba1dce";
+  // Dedicated hidden official Cinemeta catalog route with high-performance in-memory cache
+  const INTERNAL_CATALOG_BASE = "https://v3-cinemeta.strem.io";
   const catalogMemoryCache = new Map<string, { body: string; contentType: string; expires: number }>();
 
   app.use("/api/addon/catalog", async (req, res) => {
     try {
-      const subPath = req.url; // e.g. /manifest.json, /catalog/..., /meta/...
+      let subPath = req.url; // e.g. /manifest.json, /catalog/..., /meta/...
+      if (!subPath.startsWith("/")) subPath = `/${subPath}`;
       const cacheKey = `cat_${subPath}`;
       const cached = catalogMemoryCache.get(cacheKey);
       const now = Date.now();
@@ -218,6 +219,10 @@ async function startServer() {
       res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
       res.setHeader("Content-Type", "application/json");
+
+      if (req.method === "OPTIONS") {
+        return res.sendStatus(200);
+      }
 
       if (cached && cached.expires > now) {
         res.setHeader("X-Cache", "HIT");
@@ -234,6 +239,7 @@ async function startServer() {
           Accept: "application/json, text/plain, */*",
           "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
         },
+        redirect: "follow",
         signal: AbortSignal.timeout(18000),
       });
 
@@ -246,8 +252,8 @@ async function startServer() {
         try {
           const json = JSON.parse(text);
           json.id = "official.catalog";
-          json.name = "Catalogo Cinema & Serie TV";
-          json.description = "Catalogo ufficiale con schede informative e trame in lingua italiana.";
+          json.name = "Cinemeta (Ufficiale)";
+          json.description = "Catalogo ufficiale Stremio (Cinemeta) per film, serie TV e generi.";
           const modifiedText = JSON.stringify(json);
           catalogMemoryCache.set(cacheKey, {
             body: modifiedText,
@@ -261,7 +267,22 @@ async function startServer() {
         }
       }
 
-      const data = await response.text();
+      let data = await response.text();
+      // Automatically upgrade low-res posters to crystal-clear HD
+      if (data.includes('images.metahub.space/poster/small/')) {
+        data = data.replaceAll('images.metahub.space/poster/small/', 'images.metahub.space/poster/medium/');
+      }
+      if (data.includes('images.metahub.space/background/small/')) {
+        data = data.replaceAll('images.metahub.space/background/small/', 'images.metahub.space/background/medium/');
+      }
+      if (data.includes('image.tmdb.org/t/p/')) {
+        data = data
+          .replaceAll('/t/p/w185/', '/t/p/w500/')
+          .replaceAll('/t/p/w200/', '/t/p/w500/')
+          .replaceAll('/t/p/w300/', '/t/p/w500/')
+          .replaceAll('/t/p/w342/', '/t/p/w500/');
+      }
+
       // Cache meta and catalog responses
       const ttl = subPath.includes("/meta/") ? 24 * 60 * 60 * 1000 : 30 * 60 * 1000;
       catalogMemoryCache.set(cacheKey, {
@@ -275,6 +296,77 @@ async function startServer() {
     } catch (err: any) {
       console.warn(`[Catalog Proxy Error] for ${req.url}:`, err.message);
       res.status(502).json({ error: "Catalog fetch failed", message: err.message });
+    }
+  });
+
+  // Dedicated official TOP Streaming Italia addon route with caching
+  const TOP_STREAMING_BASE = "https://top-streaming.stream/1ce8a581-8ed8-49fa-9700-f10dd5e4b5bb";
+  const topStreamingMemoryCache = new Map<string, { body: string; contentType: string; expires: number }>();
+
+  app.use("/api/addon/topstreaming", async (req, res) => {
+    try {
+      let subPath = req.url;
+      if (!subPath.startsWith("/")) subPath = `/${subPath}`;
+      const cacheKey = `top_${subPath}`;
+      const cached = topStreamingMemoryCache.get(cacheKey);
+      const now = Date.now();
+
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Content-Type", "application/json");
+
+      if (req.method === "OPTIONS") {
+        return res.sendStatus(200);
+      }
+
+      if (cached && cached.expires > now) {
+        res.setHeader("X-Cache", "HIT");
+        res.setHeader("Cache-Control", "public, max-age=1800");
+        return res.send(cached.body);
+      }
+
+      const targetUrl = `${TOP_STREAMING_BASE}${subPath}`;
+      const response = await fetch(targetUrl, {
+        method: "GET",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+          "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(18000),
+      });
+
+      if (!response.ok) {
+        return res.status(response.status).json({ error: "Failed to fetch from top-streaming" });
+      }
+
+      let data = await response.text();
+      // Automatically upgrade low-res posters to HD
+      if (data.includes('image.tmdb.org/t/p/')) {
+        data = data
+          .replaceAll('/t/p/w185/', '/t/p/w500/')
+          .replaceAll('/t/p/w200/', '/t/p/w500/')
+          .replaceAll('/t/p/w300/', '/t/p/w500/')
+          .replaceAll('/t/p/w342/', '/t/p/w500/');
+      }
+      if (data.includes('images.metahub.space/poster/small/')) {
+        data = data.replaceAll('images.metahub.space/poster/small/', 'images.metahub.space/poster/medium/');
+      }
+
+      topStreamingMemoryCache.set(cacheKey, {
+        body: data,
+        contentType: "application/json",
+        expires: now + 60 * 60 * 1000,
+      });
+
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      res.send(data);
+    } catch (err: any) {
+      console.warn(`[TopStreaming Proxy Error] for ${req.url}:`, err.message);
+      res.status(502).json({ error: "TopStreaming fetch failed", message: err.message });
     }
   });
 

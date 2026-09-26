@@ -26,6 +26,8 @@ import {
 import { stremioService } from '../services/stremioService';
 import { MediaCard } from './MediaCard';
 import { getReleaseYear } from '../utils/formatters';
+import { optimizeImageUrl } from '../utils/imageOptimizer';
+import { ProviderSelector, STREAMING_PROVIDERS } from './ProviderSelector';
 
 interface CatalogBrowserProps {
   tab: 'discover' | 'movies' | 'series';
@@ -33,6 +35,31 @@ interface CatalogBrowserProps {
   onSelectMedia: (item: StremioMetaPreview) => void;
   onPlayStream: (media: StremioMetaDetail, stream?: StremioStream, video?: StremioVideo) => void;
 }
+
+// Italian to English mapping for Cinemeta catalog genres
+const GENRE_IT_TO_EN: Record<string, string> = {
+  'Azione': 'Action',
+  'Commedia': 'Comedy',
+  'Animazione': 'Animation',
+  'Horror': 'Horror',
+  'Fantascienza': 'Sci-Fi',
+  'Thriller': 'Thriller',
+  'Dramma': 'Drama',
+  'Drammatico': 'Drama',
+  'Avventura': 'Adventure',
+  'Crime': 'Crime',
+  'Crimine': 'Crime',
+  'Documentario': 'Documentary',
+  'Azione & Avventura': 'Action',
+  'Fantascienza & Fantasy': 'Sci-Fi',
+  'Famiglia': 'Family',
+  'Mistero': 'Mystery',
+  'Romantico': 'Romance',
+  'Guerra': 'War',
+  'Western': 'Western',
+  'Fantasy': 'Fantasy',
+  'Reality': 'Reality-TV',
+};
 
 // Movie Categories
 const MOVIE_GENRES = [
@@ -76,6 +103,13 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
   // Category filter state per tab
   const [selectedMovieGenre, setSelectedMovieGenre] = useState('Tutti i Film');
   const [selectedSeriesGenre, setSelectedSeriesGenre] = useState('Tutte le Serie');
+
+  // Dynamic Provider Top 10 selector state (netflix, prime, disney, apple, now, paramount, max, global)
+  const [selectedProvider, setSelectedProvider] = useState<string>('netflix');
+  const [providerCache, setProviderCache] = useState<
+    Record<string, { movies: StremioMetaPreview[]; series: StremioMetaPreview[] }>
+  >({});
+  const [providerLoading, setProviderLoading] = useState<boolean>(false);
 
   // Shared / Discover Rows
   const [top10Movies, setTop10Movies] = useState<StremioMetaPreview[]>([]);
@@ -178,7 +212,7 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
       const q = searchQuery.trim();
       if (tab === 'movies') {
         stremioService
-          .fetchCatalog('official.catalog', 'movie', 'tmdb.movie.search', { search: q })
+          .fetchCatalog('official.catalog', 'movie', 'top', { search: q })
           .then((res) => {
             setSearchResults(res);
             setSearching(false);
@@ -186,17 +220,17 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
           .catch(() => setSearching(false));
       } else if (tab === 'series') {
         stremioService
-          .fetchCatalog('official.catalog', 'series', 'tmdb.series.search', { search: q })
+          .fetchCatalog('official.catalog', 'series', 'top', { search: q })
           .then((res) => {
             setSearchResults(res);
             setSearching(false);
           })
           .catch(() => setSearching(false));
       } else {
-        // Discover: search both movies and series
+        // Discover: search both movies and series with Cinemeta
         Promise.all([
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.search', { search: q }),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.search', { search: q }),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'top', { search: q }),
+          stremioService.fetchCatalog('official.catalog', 'series', 'top', { search: q }),
         ])
           .then(([mov, ser]) => {
             const combined = [...mov, ...ser];
@@ -219,9 +253,9 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
   const loadSpecificGenre = async (type: 'movie' | 'series', genre: string) => {
     setGenreGridLoading(true);
     try {
-      const catId = type === 'movie' ? 'tmdb.movie.popular' : 'tmdb.series.popular';
-      const items = await stremioService.fetchCatalog('official.catalog', type, catId, {
-        genre,
+      const cinemetaGenre = GENRE_IT_TO_EN[genre] || genre;
+      const items = await stremioService.fetchCatalog('official.catalog', type, 'top', {
+        genre: cinemetaGenre,
       });
       setGenreGridItems(items);
     } catch (e) {
@@ -251,71 +285,126 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
     }).catch(() => {});
   };
 
+  const fetchProviderTop10 = async (providerId: string) => {
+    if (providerCache[providerId] && providerCache[providerId].movies.length > 0) {
+      return providerCache[providerId];
+    }
+
+    const config =
+      STREAMING_PROVIDERS.find((p) => p.id === providerId) || STREAMING_PROVIDERS[0];
+    setProviderLoading(true);
+
+    try {
+      const [movies, series] = await Promise.all([
+        stremioService.fetchCatalog('topstreaming.italy', 'movie', config.movieCatalogId),
+        stremioService.fetchCatalog('topstreaming.italy', 'series', config.seriesCatalogId),
+      ]);
+
+      const data = {
+        movies: movies.slice(0, 10),
+        series: series.slice(0, 10),
+      };
+
+      setProviderCache((prev) => ({ ...prev, [providerId]: data }));
+      return data;
+    } catch (e) {
+      console.warn(`Failed to fetch provider top 10 for ${providerId}`, e);
+      return { movies: [], series: [] };
+    } finally {
+      setProviderLoading(false);
+    }
+  };
+
+  const handleSelectProvider = (providerId: string) => {
+    setSelectedProvider(providerId);
+    fetchProviderTop10(providerId);
+  };
+
+  useEffect(() => {
+    fetchProviderTop10(selectedProvider);
+  }, [selectedProvider]);
+
   const loadPrimaryData = async () => {
     setLoading(true);
 
     try {
       if (tab === 'discover') {
-        const [t10m, t10s, nowPlay, trendM, trendS, topM, netM, primeM, disM] =
+        const [t10m, t10s, trendM, trendS, topM, netM, netS, primeM, disM] =
           await Promise.all([
-            stremioService.fetchCatalog('official.catalog', 'movie', 't10.movie.top10'),
-            stremioService.fetchCatalog('official.catalog', 'series', 't10.series.top10'),
-            stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.now_playing'),
-            stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.trending'),
-            stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.trending'),
-            stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.top_rated'),
-            stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.netflix'),
-            stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.amazon'),
-            stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.disney'),
+            stremioService.fetchCatalog('topstreaming.italy', 'movie', 'popular-movie-global'),
+            stremioService.fetchCatalog('topstreaming.italy', 'series', 'popular-series-global'),
+            stremioService.fetchCatalog('official.catalog', 'movie', 'top'),
+            stremioService.fetchCatalog('official.catalog', 'series', 'top'),
+            stremioService.fetchCatalog('official.catalog', 'movie', 'imdbRating'),
+            stremioService.fetchCatalog('topstreaming.italy', 'movie', 'netflix-movies-italy'),
+            stremioService.fetchCatalog('topstreaming.italy', 'series', 'netflix-series-italy'),
+            stremioService.fetchCatalog('topstreaming.italy', 'movie', 'amazon-prime-movies-italy'),
+            stremioService.fetchCatalog('topstreaming.italy', 'movie', 'disney-movies-italy'),
           ]);
 
-        if (t10m.length > 0) {
-          setTop10Movies(t10m);
-        }
+        if (t10m.length > 0) setTop10Movies(t10m);
         if (t10s.length > 0) setTop10Series(t10s);
-        if (nowPlay.length > 0) setNowPlaying(nowPlay);
-        if (trendM.length > 0) setTrendingMovies(trendM);
+        if (trendM.length > 0) {
+          setTrendingMovies(trendM);
+          setNowPlaying(trendM);
+        }
         if (trendS.length > 0) setTrendingSeries(trendS);
         if (topM.length > 0) setTopRatedMovies(topM);
         if (netM.length > 0) setNetflixMovies(netM);
+        if (netS.length > 0) setNetflixSeries(netS);
         if (primeM.length > 0) setPrimeMovies(primeM);
         if (disM.length > 0) setDisneyMovies(disM);
+
+        // Preload providerCache for instant switching between Netflix and Globale
+        setProviderCache((prev) => ({
+          ...prev,
+          global: { movies: t10m.slice(0, 10), series: t10s.slice(0, 10) },
+          netflix: { movies: netM.slice(0, 10), series: netS.slice(0, 10) },
+        }));
 
         // Featured carousel list for Discover (top movies & series combined)
         const combined = [...t10m.slice(0, 4), ...t10s.slice(0, 4)].filter(Boolean);
         if (combined.length > 0) {
           setAndEnrichFeaturedList(combined);
+        } else if (trendM.length > 0) {
+          setAndEnrichFeaturedList(trendM.slice(0, 8));
         }
       } else if (tab === 'movies') {
-        // Load Core Movie rows first
-        const [t10m, nowPlay, trendM, popM, topM] = await Promise.all([
-          stremioService.fetchCatalog('official.catalog', 'movie', 't10.movie.top10'),
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.now_playing'),
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.trending'),
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.popular'),
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.top_rated'),
+        // Load Core Movie rows from Top Streaming Italia and Cinemeta
+        const [t10m, popM, topM, netM, primeM, disM] = await Promise.all([
+          stremioService.fetchCatalog('topstreaming.italy', 'movie', 'popular-movie-global'),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'top'),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'imdbRating'),
+          stremioService.fetchCatalog('topstreaming.italy', 'movie', 'netflix-movies-italy'),
+          stremioService.fetchCatalog('topstreaming.italy', 'movie', 'amazon-prime-movies-italy'),
+          stremioService.fetchCatalog('topstreaming.italy', 'movie', 'disney-movies-italy'),
         ]);
 
         if (t10m.length > 0) {
           setTop10Movies(t10m);
           setAndEnrichFeaturedList(t10m.slice(0, 8));
-        } else if (trendM.length > 0) {
-          setAndEnrichFeaturedList(trendM.slice(0, 8));
+        } else if (popM.length > 0) {
+          setAndEnrichFeaturedList(popM.slice(0, 8));
         }
-        if (nowPlay.length > 0) setNowPlaying(nowPlay);
-        if (trendM.length > 0) setTrendingMovies(trendM);
-        if (popM.length > 0) setPopularMovies(popM);
+        if (popM.length > 0) {
+          setPopularMovies(popM);
+          setTrendingMovies(popM);
+          setNowPlaying(popM);
+        }
         if (topM.length > 0) setTopRatedMovies(topM);
+        if (netM.length > 0) setNetflixMovies(netM);
+        if (primeM.length > 0) setPrimeMovies(primeM);
+        if (disM.length > 0) setDisneyMovies(disM);
 
-        // Load Movie Categories
+        // Load Movie Categories from Cinemeta
         Promise.all([
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.popular', { genre: 'Commedia' }),
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.popular', { genre: 'Azione' }),
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.popular', { genre: 'Animazione' }),
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.popular', { genre: 'Horror' }),
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.popular', { genre: 'Fantascienza' }),
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.popular', { genre: 'Thriller' }),
-          stremioService.fetchCatalog('official.catalog', 'movie', 'tmdb.movie.popular', { genre: 'Dramma' }),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'top', { genre: 'Comedy' }),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'top', { genre: 'Action' }),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'top', { genre: 'Animation' }),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'top', { genre: 'Horror' }),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'top', { genre: 'Sci-Fi' }),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'top', { genre: 'Thriller' }),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'top', { genre: 'Drama' }),
         ]).then(([comedy, action, anim, horror, scifi, thriller, drama]) => {
           if (comedy.length > 0) setComedyMovies(comedy);
           if (action.length > 0) setActionMovies(action);
@@ -326,36 +415,39 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
           if (drama.length > 0) setDramaMovies(drama);
         }).catch(() => {});
       } else if (tab === 'series') {
-        // Load Core Series rows first
-        const [t10s, trendS, popS, topS] = await Promise.all([
-          stremioService.fetchCatalog('official.catalog', 'series', 't10.series.top10'),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.trending'),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.popular'),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.top_rated'),
+        // Load Core Series rows from Top Streaming Italia and Cinemeta
+        const [t10s, popS, topS, netS, primeS] = await Promise.all([
+          stremioService.fetchCatalog('topstreaming.italy', 'series', 'popular-series-global'),
+          stremioService.fetchCatalog('official.catalog', 'series', 'top'),
+          stremioService.fetchCatalog('official.catalog', 'series', 'imdbRating'),
+          stremioService.fetchCatalog('topstreaming.italy', 'series', 'netflix-series-italy'),
+          stremioService.fetchCatalog('topstreaming.italy', 'series', 'amazon-prime-series-italy'),
         ]);
 
         if (t10s.length > 0) {
           setTop10Series(t10s);
           setAndEnrichFeaturedList(t10s.slice(0, 8));
-        } else if (trendS.length > 0) {
-          setAndEnrichFeaturedList(trendS.slice(0, 8));
+        } else if (popS.length > 0) {
+          setAndEnrichFeaturedList(popS.slice(0, 8));
         }
-        if (trendS.length > 0) setTrendingSeries(trendS);
-        if (popS.length > 0) setPopularSeries(popS);
+        if (popS.length > 0) {
+          setPopularSeries(popS);
+          setTrendingSeries(popS);
+        }
         if (topS.length > 0) setTopRatedSeries(topS);
+        if (netS.length > 0) setNetflixSeries(netS);
+        if (primeS.length > 0) setPrimeSeries(primeS);
 
-        // Load Series Categories & Platforms
+        // Load Series Categories from Cinemeta
         Promise.all([
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.popular', { genre: 'Crime' }),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.popular', { genre: 'Commedia' }),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.popular', { genre: 'Azione & Avventura' }),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.popular', { genre: 'Fantascienza & Fantasy' }),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.popular', { genre: 'Dramma' }),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.popular', { genre: 'Animazione' }),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.popular', { genre: 'Documentario' }),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.netflix'),
-          stremioService.fetchCatalog('official.catalog', 'series', 'tmdb.series.amazon'),
-        ]).then(([crime, comedy, action, scifi, drama, anime, docu, netS, primeS]) => {
+          stremioService.fetchCatalog('official.catalog', 'series', 'top', { genre: 'Crime' }),
+          stremioService.fetchCatalog('official.catalog', 'series', 'top', { genre: 'Comedy' }),
+          stremioService.fetchCatalog('official.catalog', 'series', 'top', { genre: 'Action' }),
+          stremioService.fetchCatalog('official.catalog', 'series', 'top', { genre: 'Sci-Fi' }),
+          stremioService.fetchCatalog('official.catalog', 'series', 'top', { genre: 'Drama' }),
+          stremioService.fetchCatalog('official.catalog', 'series', 'top', { genre: 'Animation' }),
+          stremioService.fetchCatalog('official.catalog', 'series', 'top', { genre: 'Documentary' }),
+        ]).then(([crime, comedy, action, scifi, drama, anime, docu]) => {
           if (crime.length > 0) setCrimeSeries(crime);
           if (comedy.length > 0) setComedySeries(comedy);
           if (action.length > 0) setActionSeries(action);
@@ -363,8 +455,6 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
           if (drama.length > 0) setDramaSeries(drama);
           if (anime.length > 0) setAnimeSeries(anime);
           if (docu.length > 0) setDocuSeries(docu);
-          if (netS.length > 0) setNetflixSeries(netS);
-          if (primeS.length > 0) setPrimeSeries(primeS);
         }).catch(() => {});
       }
     } catch (e) {
@@ -415,6 +505,16 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
     onPlayStream(m as StremioMetaDetail);
   };
 
+  const currentProviderConfig =
+    STREAMING_PROVIDERS.find((p) => p.id === selectedProvider) || STREAMING_PROVIDERS[0];
+  const currentProviderData = providerCache[selectedProvider] || { movies: [], series: [] };
+  const providerTop10Movies = currentProviderData.movies.length > 0
+    ? currentProviderData.movies
+    : (selectedProvider === 'global' ? top10Movies.slice(0, 10) : netflixMovies.slice(0, 10));
+  const providerTop10Series = currentProviderData.series.length > 0
+    ? currentProviderData.series
+    : (selectedProvider === 'global' ? top10Series.slice(0, 10) : netflixSeries.slice(0, 10));
+
   // Search Results View
   if (searchQuery.trim()) {
     return (
@@ -438,7 +538,7 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-5 pt-3.5 pb-4">
             {searchResults.map((item, idx) => (
               <MediaCard
                 key={`${item.id}-${idx}`}
@@ -467,8 +567,8 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
             <img
               key={currentHero.id}
               src={
-                currentHero.background ||
-                currentHero.poster ||
+                optimizeImageUrl(currentHero.background, 'background') ||
+                optimizeImageUrl(currentHero.poster, 'poster') ||
                 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1920&q=85'
               }
               alt={currentHero.name}
@@ -483,36 +583,23 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
 
           {/* Hero Main Content Row */}
           <div className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-8">
-            <div className="max-w-2xl sm:max-w-3xl space-y-4">
-              {/* Unified Media Information Row: Voto, Anno, Tipo, Categoria */}
+            <div className="max-w-2xl sm:max-w-3xl space-y-3.5">
+              {/* Tipo Badge in alto */}
               <div className="flex items-center gap-2 flex-wrap text-xs">
-                {/* Voto */}
-                {currentHero.imdbRating && (
-                  <span className="flex items-center gap-1 text-[11px] text-amber-300 bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/35 font-bold shadow-md">
-                    <Star className="w-3 h-3 fill-amber-400" />
-                    <span>{currentHero.imdbRating}</span>
-                  </span>
-                )}
-
-                {/* Anno */}
-                {currentHero.releaseInfo && (
-                  <span className="text-[11px] font-semibold text-slate-200 liquid-glass-transparent px-3 py-1 rounded-full border border-white/25 shadow-md">
-                    {getReleaseYear(currentHero.releaseInfo)}
-                  </span>
-                )}
-
-                {/* Tipo */}
-                <span className="px-3 py-1 rounded-full liquid-glass-transparent text-rose-300 border border-rose-500/35 text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-md">
-                  {currentHero.type === 'movie' ? <Film className="w-3 h-3" /> : <Tv className="w-3 h-3" />}
+                <span
+                  className={`px-3 py-1 rounded-full liquid-glass-transparent text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-md ${
+                    currentHero.type === 'movie'
+                      ? 'text-rose-300 border border-rose-500/35'
+                      : 'text-purple-300 border border-purple-500/35'
+                  }`}
+                >
+                  {currentHero.type === 'movie' ? (
+                    <Film className="w-3 h-3 text-rose-400" />
+                  ) : (
+                    <Tv className="w-3 h-3 text-purple-400" />
+                  )}
                   <span>{currentHero.type === 'movie' ? 'Film' : 'Serie TV'}</span>
                 </span>
-
-                {/* Categoria / Genere */}
-                {currentHero.genres && currentHero.genres.length > 0 && (
-                  <span className="text-[11px] font-medium text-slate-300 liquid-glass-transparent px-3 py-1 rounded-full border border-white/20 shadow-md">
-                    {currentHero.genres.slice(0, 3).join(' • ')}
-                  </span>
-                )}
               </div>
 
               {/* Title / Poster Logo: Transparent PNG logo or Movie Poster Typography */}
@@ -530,21 +617,56 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
                 </h1>
               )}
 
+              {/* Valutazione, Anno e Categoria sotto il nome */}
+              <div className="flex items-center gap-2 flex-wrap text-xs pt-0.5">
+                {/* Valutazione */}
+                {currentHero.imdbRating && (
+                  <span className="flex items-center gap-1 text-[11px] text-amber-300 bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/35 font-bold shadow-md">
+                    <Star className="w-3 h-3 fill-amber-400" />
+                    <span>{currentHero.imdbRating}</span>
+                  </span>
+                )}
+
+                {/* Anno */}
+                {currentHero.releaseInfo && (
+                  <span className="text-[11px] font-semibold text-slate-200 liquid-glass-transparent px-3 py-1 rounded-full border border-white/25 shadow-md">
+                    {getReleaseYear(currentHero.releaseInfo)}
+                  </span>
+                )}
+
+                {/* Categoria / Genere */}
+                {currentHero.genres && currentHero.genres.length > 0 && (
+                  <span className="text-[11px] font-medium text-slate-300 liquid-glass-transparent px-3 py-1 rounded-full border border-white/20 shadow-md">
+                    {currentHero.genres.slice(0, 3).join(' • ')}
+                  </span>
+                )}
+              </div>
+
               {currentHero.description && (
                 <p className="text-sm sm:text-base text-slate-200/90 line-clamp-3 leading-relaxed max-w-2xl font-normal drop-shadow-md">
                   {currentHero.description}
                 </p>
               )}
 
-              {/* Action Buttons: Riproduci, Aggiungi alla Libreria, Scheda & Trama */}
+              {/* Action Buttons: Episodi / Guarda Ora, Aggiungi alla Libreria, Scheda & Trama */}
               <div className="flex items-center gap-3.5 pt-2 flex-wrap">
-                <button
-                  onClick={handleHeroPlay}
-                  className="flex items-center gap-2.5 px-8 py-3.5 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide transition-all duration-200 shadow-xl shadow-red-600/40 hover:shadow-red-500/60 active:scale-95 cursor-pointer"
-                >
-                  <Play className="w-4 h-4 fill-current ml-0.5" />
-                  <span>Guarda Ora</span>
-                </button>
+                {currentHero.type === 'series' ? (
+                  <button
+                    onClick={() => onSelectMedia(currentHero)}
+                    className="flex items-center gap-2.5 px-8 py-3.5 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide transition-all duration-200 shadow-xl shadow-red-600/40 hover:shadow-red-500/60 active:scale-95 cursor-pointer"
+                  >
+                    <Tv className="w-4 h-4 text-white" />
+                    <span>Episodi</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleHeroPlay}
+                    className="flex items-center gap-2.5 px-8 py-3.5 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide transition-all duration-200 shadow-xl shadow-red-600/40 hover:shadow-red-500/60 active:scale-95 cursor-pointer"
+                  >
+                    <Play className="w-4 h-4 fill-current ml-0.5" />
+                    <span>Guarda Ora</span>
+                  </button>
+                )}
 
                 <button
                   onClick={handleHeroLibraryToggle}
@@ -661,7 +783,7 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
           <div className="flex items-center justify-between gap-4 mb-2">
             <div>
               <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-                <Tv className="w-5 h-5 text-rose-400" />
+                <Tv className="w-5 h-5 text-purple-400" />
                 <span>Serie TV & Show</span>
               </h2>
               <p className="text-xs text-slate-400">
@@ -676,7 +798,7 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
                 onClick={() => setSelectedSeriesGenre(g)}
                 className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                   selectedSeriesGenre === g
-                    ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-md shadow-red-600/40 border border-rose-400/40 font-bold'
+                    ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-md shadow-purple-600/40 border border-purple-400/40 font-bold'
                     : 'liquid-glass-transparent text-slate-300 hover:text-white border-white/20'
                 }`}
               >
@@ -692,26 +814,38 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
         {/* ==================== TAB 1: SCOPRI (DISCOVER) ==================== */}
         {tab === 'discover' && (
           <>
-            {/* Top 10 Italia - Film */}
+            {/* ================= LIQUID GLASS PROVIDER SELECTOR PILL ================= */}
+            <div className="pt-1">
+              <ProviderSelector
+                selectedProvider={selectedProvider}
+                onSelectProvider={handleSelectProvider}
+                title="Classifiche Top 10 Ufficiali per Provider"
+                subtitle="Seleziona un logo per visualizzare la classifica dei 10 titoli più visti di oggi in Italia o nel mondo"
+              />
+            </div>
+
+            {/* Top 10 Film del Provider Selezionato */}
             <CatalogRow
-              title="Top 10 Italia - Film"
-              subtitle="I 10 film più visti e di maggior successo in Italia"
-              items={top10Movies}
-              badge="Top 10"
+              key={`provider-movies-${selectedProvider}`}
+              title={`Top 10 ${currentProviderConfig.shortName} - Film`}
+              subtitle={currentProviderConfig.movieSubtitle}
+              items={providerTop10Movies}
+              badge={`Top 10 ${currentProviderConfig.shortName}`}
               showRank
-              loading={loading}
+              loading={providerLoading && providerTop10Movies.length === 0}
               onSelect={onSelectMedia}
               onQuickPlay={handleCardQuickPlay}
             />
 
-            {/* Top 10 Italia - Serie TV */}
+            {/* Top 10 Serie TV del Provider Selezionato */}
             <CatalogRow
-              title="Top 10 Italia - Serie TV"
-              subtitle="Le 10 serie televisive più seguite e discusse del momento"
-              items={top10Series}
-              badge="Top 10"
+              key={`provider-series-${selectedProvider}`}
+              title={`Top 10 ${currentProviderConfig.shortName} - Serie TV`}
+              subtitle={currentProviderConfig.seriesSubtitle}
+              items={providerTop10Series}
+              badge={`Top 10 ${currentProviderConfig.shortName}`}
               showRank
-              loading={loading}
+              loading={providerLoading && providerTop10Series.length === 0}
               onSelect={onSelectMedia}
               onQuickPlay={handleCardQuickPlay}
             />
@@ -826,7 +960,7 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
                     <p className="text-sm">Nessun film trovato per la categoria {selectedMovieGenre}.</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-5 pt-3.5 pb-4">
                     {genreGridItems.map((item, idx) => (
                       <MediaCard
                         key={`${item.id}-${idx}`}
@@ -841,14 +975,24 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
             ) : (
               /* Sezione Tutti i Film con tutte le categorie ricche */
               <>
-                {/* 1. Top Movie */}
+                {/* 1. Provider Selector & Top Movie */}
+                <div className="pt-1">
+                  <ProviderSelector
+                    selectedProvider={selectedProvider}
+                    onSelectProvider={handleSelectProvider}
+                    title="Classifiche Top 10 Film per Piattaforma"
+                    subtitle="Seleziona un logo per visualizzare i 10 film più visti del momento sul provider scelto"
+                  />
+                </div>
+
                 <CatalogRow
-                  title="Top 10 Film - Italia"
-                  subtitle="I 10 film con il maggior numero di visualizzazioni"
-                  items={top10Movies}
-                  badge="Top 10"
+                  key={`tab-movies-provider-${selectedProvider}`}
+                  title={`Top 10 ${currentProviderConfig.shortName} - Film`}
+                  subtitle={currentProviderConfig.movieSubtitle}
+                  items={providerTop10Movies}
+                  badge={`Top 10 ${currentProviderConfig.shortName}`}
                   showRank
-                  loading={loading}
+                  loading={providerLoading && providerTop10Movies.length === 0}
                   onSelect={onSelectMedia}
                   onQuickPlay={handleCardQuickPlay}
                 />
@@ -1019,7 +1163,7 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
                     <p className="text-sm">Nessuna serie trovata per la categoria {selectedSeriesGenre}.</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-5 pt-3.5 pb-4">
                     {genreGridItems.map((item, idx) => (
                       <MediaCard
                         key={`${item.id}-${idx}`}
@@ -1034,14 +1178,24 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
             ) : (
               /* Sezione Tutte le Serie TV con categorie dettagliate */
               <>
-                {/* 1. Top 10 Serie TV Italia */}
+                {/* 1. Provider Selector & Top Series */}
+                <div className="pt-1">
+                  <ProviderSelector
+                    selectedProvider={selectedProvider}
+                    onSelectProvider={handleSelectProvider}
+                    title="Classifiche Top 10 Serie TV per Piattaforma"
+                    subtitle="Seleziona un logo per visualizzare le 10 serie TV più viste del momento sul provider scelto"
+                  />
+                </div>
+
                 <CatalogRow
-                  title="Top 10 Serie TV - Italia"
-                  subtitle="Le 10 serie televisive più viste in Italia questa settimana"
-                  items={top10Series}
-                  badge="Top 10"
+                  key={`tab-series-provider-${selectedProvider}`}
+                  title={`Top 10 ${currentProviderConfig.shortName} - Serie TV`}
+                  subtitle={currentProviderConfig.seriesSubtitle}
+                  items={providerTop10Series}
+                  badge={`Top 10 ${currentProviderConfig.shortName}`}
                   showRank
-                  loading={loading}
+                  loading={providerLoading && providerTop10Series.length === 0}
                   onSelect={onSelectMedia}
                   onQuickPlay={handleCardQuickPlay}
                 />
@@ -1306,11 +1460,11 @@ const CatalogRow: React.FC<CatalogRowProps> = ({
       <div className="relative">
         <div
           ref={rowRef}
-          className="flex gap-4 overflow-x-auto pb-4 pt-1.5 scroll-smooth scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0"
+          className="flex gap-4 overflow-x-auto pb-4 pt-3.5 sm:pt-4 scroll-smooth scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0"
         >
           {uniqueItems.length === 0 && loading ? (
             Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="w-36 sm:w-44 flex-shrink-0 animate-pulse">
+              <div key={i} className="w-44 sm:w-52 md:w-56 flex-shrink-0 animate-pulse">
                 <div className="aspect-[2/3] rounded-2xl liquid-glass border border-white/10 bg-white/[0.03]" />
                 <div className="h-3.5 bg-white/10 rounded-md mt-2.5 w-3/4" />
                 <div className="h-2.5 bg-white/5 rounded-md mt-1.5 w-1/2" />
@@ -1318,7 +1472,7 @@ const CatalogRow: React.FC<CatalogRowProps> = ({
             ))
           ) : (
             uniqueItems.map((item, index) => (
-              <div key={`${item.id}-${index}`} className="relative w-36 sm:w-44 flex-shrink-0">
+              <div key={`${item.id}-${index}`} className="relative w-44 sm:w-52 md:w-56 flex-shrink-0">
                 <MediaCard
                   item={item}
                   rank={showRank && index < 10 ? index + 1 : undefined}

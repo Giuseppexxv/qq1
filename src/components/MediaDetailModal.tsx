@@ -28,6 +28,7 @@ import {
 } from '../types/stremio';
 import { stremioService } from '../services/stremioService';
 import { getReleaseYear } from '../utils/formatters';
+import { optimizeImageUrl } from '../utils/imageOptimizer';
 
 interface MediaDetailModalProps {
   item: StremioMetaPreview | null;
@@ -54,17 +55,23 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   const [isSeasonDropdownOpen, setIsSeasonDropdownOpen] = useState(false);
   const [copiedShare, setCopiedShare] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [headerProgress, setHeaderProgress] = useState(0);
   const [trailerActive, setTrailerActive] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const episodeCarouselRef = useRef<HTMLDivElement>(null);
   const seasonDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Track scroll position to slide the banner up and reveal sticky title bar
+  // Track scroll position: starts fading in smoothly from half the cover, 100% visible when Guarda Ora reaches the top
   const handleScroll = () => {
     if (scrollContainerRef.current) {
       const top = scrollContainerRef.current.scrollTop;
-      setIsScrolled(top > 80);
+      const isSm = window.innerWidth >= 640;
+      const startFade = isSm ? 160 : 120; // metà della copertina
+      const fullFade = isSm ? 330 : 255;  // quando Guarda Ora arriva in cima
+      const progress = Math.min(1, Math.max(0, (top - startFade) / (fullFade - startFade)));
+      setHeaderProgress(progress);
+      setIsScrolled(progress >= 0.9);
     }
   };
 
@@ -280,22 +287,22 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         
         {/* ================= PINNED STICKY TOP HEADER BAR ================= */}
         {/* Pinned directly at the top of the modal frame.
-            When scrolled: frosted liquid glass banner with the film's title in poster font, media average, year, and Guarda Ora.
-            When at top: transparent overlay directly on the banner with the close button. */}
-        <div
-          className={`absolute top-0 left-0 right-0 z-40 transition-all duration-300 flex items-center justify-between px-5 sm:px-8 py-3.5 ${
-            isScrolled
-              ? 'liquid-bubble-glass bg-[#050508]/95 backdrop-blur-2xl border-b border-white/20 shadow-2xl pointer-events-auto'
-              : 'bg-gradient-to-b from-black/85 via-black/25 to-transparent pointer-events-none'
-          }`}
-        >
-          {/* Left Title: appears when scrolled, in the authentic locandina font */}
+            Fades in smoothly starting halfway through the cover, reaches 100% opacity when Guarda Ora reaches the top. */}
+        <div className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between px-5 sm:px-8 py-3.5 pointer-events-none">
+          {/* Frosted Background that fades in smoothly based on headerProgress */}
           <div
-            className={`flex items-center gap-3 transition-all duration-300 min-w-0 ${
-              isScrolled
-                ? 'opacity-100 translate-y-0 pointer-events-auto'
-                : 'opacity-0 -translate-y-2 pointer-events-none'
-            }`}
+            className="absolute inset-0 bg-[#07070d]/95 backdrop-blur-2xl shadow-[0_12px_32px_rgba(0,0,0,0.85)] pointer-events-none transition-opacity duration-150"
+            style={{ opacity: headerProgress }}
+          />
+
+          {/* Left Title: starts fading in smoothly from half the cover, 100% when Guarda Ora reaches top */}
+          <div
+            className="relative flex items-center gap-3 min-w-0 pr-4 transition-all duration-150"
+            style={{
+              opacity: headerProgress,
+              transform: `translateY(${(1 - headerProgress) * -4}px)`,
+              pointerEvents: headerProgress > 0.3 ? 'auto' : 'none',
+            }}
           >
             {detail?.logo ? (
               <img
@@ -323,7 +330,23 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
           </div>
 
           {/* Right Action Buttons */}
-          <div className="flex items-center gap-2 sm:gap-3 ml-auto pointer-events-auto">
+          <div className="relative flex items-center gap-2 sm:gap-3 ml-auto pointer-events-auto">
+            {/* Quick Play button inside sticky bar: fades in progressively for movies */}
+            {detail?.type !== 'series' && (
+              <button
+                onClick={handlePrimaryPlay}
+                style={{
+                  opacity: headerProgress,
+                  transform: `scale(${0.92 + headerProgress * 0.08})`,
+                  pointerEvents: headerProgress > 0.4 ? 'auto' : 'none',
+                }}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-black shadow-md shadow-red-600/40 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span className="hidden sm:inline">Guarda Ora</span>
+              </button>
+            )}
+
             {/* Series Tab Switcher incorporated directly near Guarda Ora */}
             {detail?.type === 'series' && (
               <div className="flex items-center p-1 rounded-full liquid-glass-transparent border border-white/25 shadow-md">
@@ -353,17 +376,6 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               </div>
             )}
 
-            {/* Quick Play button inside sticky bar when scrolled */}
-            {isScrolled && (
-              <button
-                onClick={handlePrimaryPlay}
-                className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-black shadow-md shadow-red-600/40 transition-transform active:scale-95 cursor-pointer"
-              >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                <span className="hidden sm:inline">Guarda Ora</span>
-              </button>
-            )}
-
             {/* Close Button */}
             <button
               onClick={onClose}
@@ -385,7 +397,10 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
           {/* Starts right at top 0, no black band */}
           <div className="relative h-72 sm:h-96 w-full overflow-hidden flex-shrink-0 bg-black">
             <img
-              src={detail?.background || detail?.poster || item.poster}
+              src={
+                optimizeImageUrl(detail?.background, 'background') ||
+                optimizeImageUrl(detail?.poster || item.poster, 'poster')
+              }
               alt={detail?.name || item.name}
               className="w-full h-full object-cover object-top filter brightness-100 contrast-110 saturate-140 transition-transform duration-700 ease-out hover:scale-105"
             />
@@ -394,12 +409,45 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
             <div className="absolute inset-0 bg-gradient-to-t from-[#050508] via-[#050508]/50 to-transparent" />
             <div className="absolute inset-0 bg-gradient-to-r from-[#050508]/85 via-[#050508]/30 to-transparent sm:w-3/4" />
 
+            {/* Pillola Film / Serie TV fissa in alto a sinistra della copertina (rimane su e svanisce scorrendo giù) */}
+            <div className="absolute top-4 sm:top-5 left-5 sm:left-8 z-20 pointer-events-none select-none">
+              <span
+                className={`px-3.5 py-1.5 rounded-full liquid-glass-transparent text-xs font-bold uppercase tracking-wider backdrop-blur-xl shadow-lg flex items-center gap-1.5 ${
+                  detail?.type === 'series'
+                    ? 'border border-purple-500/40 text-purple-300'
+                    : 'border border-rose-500/40 text-rose-300'
+                }`}
+              >
+                {detail?.type === 'series' ? (
+                  <Tv className="w-3.5 h-3.5 text-purple-400" />
+                ) : (
+                  <Film className="w-3.5 h-3.5 text-rose-400" />
+                )}
+                <span>{detail?.type === 'series' ? 'Serie TV' : 'Film'}</span>
+              </span>
+            </div>
+
             {/* Title and Unified Metadata inside Banner */}
             <div className="absolute bottom-5 sm:bottom-7 left-5 right-5 sm:left-8 sm:right-8 flex flex-col sm:flex-row sm:items-end justify-between gap-5 z-20">
               <div className="max-w-3xl space-y-2.5">
-                {/* Unified Media Metadata Row: Voto, Anno, Tipo, Categoria */}
-                <div className="flex items-center gap-2 flex-wrap text-xs">
-                  {/* Voto */}
+                {/* Title / Poster Graphic in authentic locandina font */}
+                {detail?.logo ? (
+                  <div className="py-1">
+                    <img
+                      src={detail.logo}
+                      alt={detail.name || item.name}
+                      className="h-14 sm:h-20 md:h-24 max-w-[85vw] sm:max-w-xl object-contain object-left drop-shadow-[0_8px_20px_rgba(0,0,0,0.95)]"
+                    />
+                  </div>
+                ) : (
+                  <h2 className="font-poster-logo text-3xl sm:text-5xl md:text-6xl font-black tracking-tight leading-none drop-shadow-[0_6px_25px_rgba(0,0,0,0.95)]">
+                    {detail?.name || item.name}
+                  </h2>
+                )}
+
+                {/* Unified Media Metadata Row: Media, Anno, Categoria sotto il titolo */}
+                <div className="flex items-center gap-2 flex-wrap text-xs pt-1">
+                  {/* Media / Voto */}
                   <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-bold shadow-md backdrop-blur-md">
                     <Star className="w-3 h-3 fill-amber-400" />
                     <span>Media: {globalAverageScore}/10</span>
@@ -415,12 +463,6 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                     </span>
                   )}
 
-                  {/* Tipo */}
-                  <span className="px-3 py-1 rounded-full liquid-glass-transparent border border-rose-500/35 text-[11px] font-bold text-rose-300 backdrop-blur-md shadow-md flex items-center gap-1">
-                    {detail?.type === 'series' ? <Tv className="w-3 h-3" /> : <Film className="w-3 h-3" />}
-                    <span>{detail?.type === 'series' ? 'Serie TV' : 'Film'}</span>
-                  </span>
-
                   {/* Categoria / Genere */}
                   {genreText && (
                     <span className="px-3 py-1 rounded-full liquid-glass-transparent border border-white/20 text-[11px] font-medium text-slate-300 backdrop-blur-md shadow-md">
@@ -428,21 +470,6 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                     </span>
                   )}
                 </div>
-
-                {/* Title / Poster Graphic in authentic locandina font */}
-                {detail?.logo ? (
-                  <div className="py-1">
-                    <img
-                      src={detail.logo}
-                      alt={detail.name || item.name}
-                      className="h-14 sm:h-20 md:h-24 max-w-[85vw] sm:max-w-xl object-contain object-left drop-shadow-[0_8px_20px_rgba(0,0,0,0.95)]"
-                    />
-                  </div>
-                ) : (
-                  <h2 className="font-poster-logo text-3xl sm:text-5xl md:text-6xl font-black tracking-tight leading-none drop-shadow-[0_6px_25px_rgba(0,0,0,0.95)]">
-                    {detail?.name || item.name}
-                  </h2>
-                )}
 
                 {/* Tagline / Subtitle */}
                 {detail?.tagline && (
@@ -479,13 +506,23 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                   <span>{inLibrary ? 'In Libreria' : 'Aggiungi alla Libreria'}</span>
                 </button>
 
-                <button
-                  onClick={handlePrimaryPlay}
-                  className="flex items-center gap-2.5 px-7 py-3 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide shadow-xl shadow-red-600/40 hover:shadow-red-500/60 transition-all duration-200 hover:scale-[1.02] active:scale-95 cursor-pointer"
-                >
-                  <Play className="w-4 h-4 fill-current ml-0.5" />
-                  <span>{detail?.type === 'series' ? 'Riproduci Episodio' : 'Guarda Ora'}</span>
-                </button>
+                {detail?.type === 'series' ? (
+                  <button
+                    onClick={() => setActiveTab('episodes')}
+                    className="flex items-center gap-2.5 px-7 py-3 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide shadow-xl shadow-red-600/40 hover:shadow-red-500/60 transition-all duration-200 hover:scale-[1.02] active:scale-95 cursor-pointer"
+                  >
+                    <Tv className="w-4 h-4 text-white" />
+                    <span>Episodi</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handlePrimaryPlay}
+                    className="flex items-center gap-2.5 px-7 py-3 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide shadow-xl shadow-red-600/40 hover:shadow-red-500/60 transition-all duration-200 hover:scale-[1.02] active:scale-95 cursor-pointer"
+                  >
+                    <Play className="w-4 h-4 fill-current ml-0.5" />
+                    <span>Guarda Ora</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -776,8 +813,10 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                       <button
                         type="button"
                         onClick={() => setIsSeasonDropdownOpen(!isSeasonDropdownOpen)}
-                        className={`w-full flex items-center justify-between gap-3 px-4 py-2.5 liquid-glass-transparent border border-white/30 text-white text-xs font-bold transition-all cursor-pointer shadow-xl ${
-                          isSeasonDropdownOpen ? 'rounded-t-2xl border-b-0 bg-white/[0.14]' : 'rounded-full'
+                        className={`w-full flex items-center justify-between gap-3 px-4 py-2.5 text-white text-xs font-bold transition-all cursor-pointer shadow-xl backdrop-blur-2xl ${
+                          isSeasonDropdownOpen
+                            ? 'rounded-t-2xl border-b-0 bg-[#0d0d16]/98 border border-white/25 shadow-2xl'
+                            : 'rounded-full bg-[#0d0d16]/80 hover:bg-[#151522]/90 border border-white/20 hover:border-white/35'
                         }`}
                       >
                         <span className="flex items-center gap-2">
@@ -791,10 +830,10 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                         />
                       </button>
 
-                      {/* Dropdown Menu - Liquid Glass Translucent Menu */}
+                      {/* Dropdown Menu - Sleek AMOLED Glass Menu */}
                       {isSeasonDropdownOpen && (
-                        <div className="absolute top-full left-0 right-0 liquid-glass-dropdown border border-white/25 border-t-0 rounded-b-2xl shadow-[0_20px_50px_rgba(0,0,0,0.95)] z-[999] overflow-hidden">
-                          <div className="text-[10px] uppercase font-bold text-slate-300 px-4 py-2 border-b border-white/10 tracking-wider bg-white/[0.05]">
+                        <div className="absolute top-full left-0 right-0 bg-[#0d0d16]/98 backdrop-blur-3xl border border-white/25 border-t-0 rounded-b-2xl shadow-[0_25px_60px_rgba(0,0,0,0.95)] z-[999] overflow-hidden">
+                          <div className="text-[10px] uppercase font-bold text-slate-400 px-4 py-2 border-b border-white/10 tracking-wider bg-white/[0.03]">
                             Seleziona Stagione ({availableSeasons.length})
                           </div>
                           <div className="flex flex-col max-h-56 overflow-y-auto scrollbar-thin py-1">
@@ -811,8 +850,8 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                   }}
                                   className={`w-full flex items-center justify-between px-4 py-2.5 text-xs font-semibold transition-colors cursor-pointer text-left ${
                                     isSelected
-                                      ? 'bg-rose-600/40 text-white font-bold border-l-2 border-rose-500'
-                                      : 'text-slate-300 hover:text-white hover:bg-white/15'
+                                      ? 'bg-rose-600/30 text-white font-bold border-l-2 border-rose-500'
+                                      : 'text-slate-300 hover:text-white hover:bg-white/[0.08]'
                                   }`}
                                 >
                                   <span>Stagione {s}</span>
@@ -918,14 +957,14 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                           </div>
                         </div>
 
-                        {/* Episode Info: Title & Description */}
+                        {/* Episode Info: Title & Description (senza stagione ed episodio sotto) */}
                         <div className="p-4 flex-1 flex flex-col justify-between space-y-2">
                           <div>
                             <h5 className="text-sm font-bold text-white group-hover:text-rose-200 transition-colors line-clamp-1">
                               {cleanTitle}
                             </h5>
                             {vid.overview ? (
-                              <p className="text-xs text-slate-300/85 line-clamp-2 leading-relaxed mt-1">
+                              <p className="text-xs text-slate-300/85 line-clamp-3 leading-relaxed mt-1">
                                 {vid.overview}
                               </p>
                             ) : (
@@ -933,16 +972,6 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                 Nessuna descrizione disponibile per questo episodio.
                               </p>
                             )}
-                          </div>
-
-                          {/* Clean Footer without duplicate episode label or redundant year */}
-                          <div className="pt-2 flex items-center justify-between border-t border-white/[0.06] text-[11px] text-slate-400 font-mono">
-                            <span className="text-rose-400 font-medium">
-                              Stagione {vid.season || selectedSeason}
-                            </span>
-                            <span className="text-slate-400">
-                              Episodio {epNum}
-                            </span>
                           </div>
                         </div>
                       </div>

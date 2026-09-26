@@ -29,10 +29,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onSelectMedia, onPlayS
       {/* Header */}
       <div>
         <div className="flex items-center gap-2 mb-1">
-          <span className="p-1 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-            <Bookmark className="w-4 h-4" />
+          <span className="p-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/35">
+            <Bookmark className="w-4 h-4 fill-amber-400/30" />
           </span>
-          <span className="text-xs uppercase font-bold tracking-widest text-cyan-400">
+          <span className="text-xs uppercase font-bold tracking-widest text-amber-400">
             Collezione Personale
           </span>
         </div>
@@ -115,7 +115,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onSelectMedia, onPlayS
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-5 pt-3.5 pb-4">
             {library.map((item, idx) => (
               <MediaCard
                 key={`${item.id}-${idx}`}
