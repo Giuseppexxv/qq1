@@ -19,7 +19,7 @@ export interface ProviderConfig {
 export const STREAMING_PROVIDERS: ProviderConfig[] = [
   {
     id: 'global',
-    name: 'Top 10 Globale',
+    name: 'Globale',
     shortName: 'Globale',
     isGlobal: true,
     movieCatalogId: 'popular-movie-global',
@@ -45,7 +45,7 @@ export const STREAMING_PROVIDERS: ProviderConfig[] = [
   },
   {
     id: 'prime',
-    name: 'Amazon Prime Video',
+    name: 'Prime Video',
     shortName: 'Prime Video',
     logoUrl: '/providers/prime.svg',
     movieCatalogId: 'amazon-prime-movies-italy',

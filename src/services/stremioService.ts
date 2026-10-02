@@ -7,6 +7,7 @@ import {
   StremioSubtitle,
 } from '../types/stremio';
 import { optimizeImageUrl } from '../utils/imageOptimizer';
+import { filterReleasedItems } from '../utils/releaseFilter';
 
 const ADDONS_STORAGE_KEY = 'liquid_stremio_addons_v5';
 const HISTORY_STORAGE_KEY = 'liquid_stremio_history_v1';
@@ -144,10 +145,22 @@ class StremioService {
   private catalogCache = new Map<string, { data: StremioMetaPreview[]; expires: number }>();
   private metaCache = new Map<string, { data: StremioMetaDetail; expires: number }>();
   private streamCache = new Map<string, { data: StremioStream[]; expires: number }>();
+  private libraryCache: StremioMetaPreview[] | null = null;
+  private libraryIdSet: Set<string> = new Set<string>();
 
   constructor() {
     this.loadAddons();
     this.loadPersistentCatalogCache();
+    this.getLibrary();
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (e) => {
+        if (e.key === LIBRARY_STORAGE_KEY) {
+          this.libraryCache = null;
+          this.getLibrary();
+        }
+      });
+    }
   }
 
   private loadPersistentCatalogCache() {
@@ -167,19 +180,24 @@ class StremioService {
     }
   }
 
+  private saveCacheTimeout: any = null;
   private savePersistentCatalogCache() {
-    try {
-      const obj: Record<string, { data: StremioMetaPreview[]; expires: number }> = {};
-      const now = Date.now();
-      this.catalogCache.forEach((val, key) => {
-        if (val.expires > now) {
-          obj[key] = val;
-        }
-      });
-      localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(obj));
-    } catch (e) {
-      // ignore
-    }
+    if (this.saveCacheTimeout) return;
+    this.saveCacheTimeout = setTimeout(() => {
+      this.saveCacheTimeout = null;
+      try {
+        const obj: Record<string, { data: StremioMetaPreview[]; expires: number }> = {};
+        const now = Date.now();
+        this.catalogCache.forEach((val, key) => {
+          if (val.expires > now) {
+            obj[key] = val;
+          }
+        });
+        localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(obj));
+      } catch (e) {
+        // ignore
+      }
+    }, 1200);
   }
 
   public getCachedCatalog(
@@ -336,6 +354,19 @@ class StremioService {
     this.saveAddons();
   }
 
+  public async fetchFlixpatrolPopular(type: 'movie' | 'series'): Promise<StremioMetaPreview[]> {
+    try {
+      const resp = await fetch(`/api/flixpatrol-popular?type=${type}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        return Array.isArray(data.metas) ? data.metas : [];
+      }
+    } catch (e) {
+      console.warn('Failed to fetch FlixPatrol popular from API', e);
+    }
+    return [];
+  }
+
   // Fetch Catalog items with in-memory caching
   public async fetchCatalog(
     addonId: string,
@@ -363,14 +394,19 @@ class StremioService {
 
     try {
       let resp: Response | null = null;
+      const fetchOpts: RequestInit = {
+        signal: AbortSignal.timeout(10000),
+        headers: { Priority: 'u=0, i' },
+        ...({ priority: 'high' } as any),
+      };
       if (url.startsWith('/api/') || url.startsWith('http://localhost') || (typeof window !== 'undefined' && url.startsWith(window.location.origin))) {
-        resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        resp = await fetch(url, fetchOpts);
       } else {
         try {
           const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
-          resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+          resp = await fetch(proxyUrl, fetchOpts);
         } catch {
-          resp = await fetch(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+          resp = await fetch(url, fetchOpts).catch(() => null);
         }
       }
 
@@ -438,9 +474,12 @@ class StremioService {
         }
       }
 
-      this.catalogCache.set(cacheKey, { data: results, expires: now + 30 * 60 * 1000 });
+      // Filter results to guarantee that only already released titles are returned
+      const filteredResults = filterReleasedItems(results);
+
+      this.catalogCache.set(cacheKey, { data: filteredResults, expires: now + 30 * 60 * 1000 });
       this.savePersistentCatalogCache();
-      return results;
+      return filteredResults;
     } catch (err) {
       console.warn(`[StremioService] Catalog fetch failed for ${url}`, err);
       return [];
@@ -472,14 +511,19 @@ class StremioService {
       try {
         const url = `${addon.transportUrl}/meta/${type}/${id}.json`;
         let resp: Response | null = null;
+        const fetchOpts: RequestInit = {
+          signal: AbortSignal.timeout(10000),
+          headers: { Priority: 'u=0, i' },
+          ...({ priority: 'high' } as any),
+        };
         if (url.startsWith('/api/') || (typeof window !== 'undefined' && url.startsWith(window.location.origin))) {
-          resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+          resp = await fetch(url, fetchOpts);
         } else {
           try {
             const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
-            resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+            resp = await fetch(proxyUrl, fetchOpts);
           } catch {
-            resp = await fetch(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+            resp = await fetch(url, fetchOpts).catch(() => null);
           }
         }
 
@@ -487,6 +531,12 @@ class StremioService {
           const data = await resp.json();
           if (data.meta) {
             const meta = data.meta;
+            if (!meta.id) {
+              meta.id = meta.imdb_id || id;
+            }
+            if (!meta.type) {
+              meta.type = type;
+            }
             if (!meta.genres && meta.genre) {
               meta.genres = Array.isArray(meta.genre) ? meta.genre : [meta.genre];
             }
@@ -541,14 +591,19 @@ class StremioService {
       try {
         const url = `${addon.transportUrl}/stream/${type}/${id}.json`;
         let resp: Response | null = null;
+        const fetchOpts: RequestInit = {
+          signal: AbortSignal.timeout(6500),
+          headers: { Priority: 'u=0, i' },
+          ...({ priority: 'high' } as any),
+        };
         if (url.startsWith('/api/') || (typeof window !== 'undefined' && url.startsWith(window.location.origin))) {
-          resp = await fetch(url, { signal: AbortSignal.timeout(6000) });
+          resp = await fetch(url, fetchOpts);
         } else {
           try {
             const proxyUrl = `/api/stremio-proxy?url=${encodeURIComponent(url)}`;
-            resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(7000) });
+            resp = await fetch(proxyUrl, fetchOpts);
           } catch {
-            resp = await fetch(url, { signal: AbortSignal.timeout(7000) }).catch(() => null);
+            resp = await fetch(url, fetchOpts).catch(() => null);
           }
         }
 
@@ -688,7 +743,13 @@ class StremioService {
   public getHistory(): any[] {
     try {
       const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      if (raw !== null) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      }
+      return [];
     } catch {
       return [];
     }
@@ -696,42 +757,248 @@ class StremioService {
 
   public saveHistoryItem(item: any) {
     try {
+      // Filter out any prior entry of the same series or movie to keep only 1 card per title
       const history = this.getHistory().filter((h: any) => h.id !== item.id);
-      history.unshift({ ...item, lastWatched: Date.now() });
+
+      // Find if they are watching the EXACT same movie or the EXACT same series episode to carry over progress
+      const existing = this.getHistory().find((h: any) => 
+        (item.videoId && h.videoId) ? h.videoId === item.videoId : h.id === item.id
+      );
+
+      const currentTime = item.currentTime ?? existing?.currentTime ?? 0;
+      const duration = item.duration ?? existing?.duration ?? 0;
+      const progress = item.progress ?? existing?.progress ?? (duration > 0 ? Math.round((currentTime / duration) * 100) : 0);
+      const subtitleUrl = item.subtitleUrl !== undefined ? item.subtitleUrl : existing?.subtitleUrl;
+      const subtitleLang = item.subtitleLang !== undefined ? item.subtitleLang : existing?.subtitleLang;
+      const subtitleId = item.subtitleId !== undefined ? item.subtitleId : existing?.subtitleId;
+
+      history.unshift({
+        ...item,
+        currentTime,
+        duration,
+        progress,
+        subtitleUrl,
+        subtitleLang,
+        subtitleId,
+        lastWatched: Date.now(),
+      });
       localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history.slice(0, 30)));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('stremio_history_changed'));
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  public savePlaybackProgress(id: string, currentTime: number, duration: number, videoId?: string) {
+    try {
+      if (typeof currentTime !== 'number' || isNaN(currentTime) || currentTime < 1) return;
+      const history = this.getHistory();
+      let index = videoId ? history.findIndex((h: any) => h.videoId === videoId) : -1;
+      if (index === -1) {
+        index = history.findIndex((h: any) => h.id === id);
+      }
+      const progress = duration > 0 ? Math.min(100, Math.round((currentTime / duration) * 100)) : 0;
+      if (index !== -1) {
+        history[index].currentTime = Math.floor(currentTime);
+        if (duration > 0) history[index].duration = Math.floor(duration);
+        if (progress > 0) history[index].progress = progress;
+        history[index].lastWatched = Date.now();
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('stremio_history_changed'));
+        }
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  public saveSubtitlePreference(id: string, subtitleUrl: string | null, subtitleLang?: string, subtitleId?: string, videoId?: string) {
+    try {
+      const history = this.getHistory();
+      let index = videoId ? history.findIndex((h: any) => h.videoId === videoId) : -1;
+      if (index === -1) {
+        index = history.findIndex((h: any) => h.id === id);
+      }
+      if (index !== -1) {
+        history[index].subtitleUrl = subtitleUrl;
+        history[index].subtitleLang = subtitleLang;
+        history[index].subtitleId = subtitleId;
+        history[index].lastWatched = Date.now();
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+      }
+    } catch (e) {
+      console.warn('Failed to save subtitle preference', e);
+    }
+  }
+
+  public getSavedSubtitlePreference(id: string, videoId?: string): { url: string | null; lang?: string; id?: string } | null {
+    try {
+      const history = this.getHistory();
+      let item = videoId ? history.find((h: any) => h.videoId === videoId) : undefined;
+      if (!item) {
+        item = history.find((h: any) => h.id === id);
+      }
+      if (item && item.subtitleUrl !== undefined) {
+        return {
+          url: item.subtitleUrl,
+          lang: item.subtitleLang,
+          id: item.subtitleId,
+        };
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+    return null;
+  }
+
+  public getSavedPlaybackTime(id: string, videoId?: string): number {
+    try {
+      const history = this.getHistory();
+      const item = videoId 
+        ? history.find((h: any) => h.videoId === videoId) 
+        : history.find((h: any) => h.id === id && !h.videoId);
+
+      if (item && typeof item.currentTime === 'number' && item.currentTime > 5) {
+        if (item.duration && item.duration > 60 && item.currentTime >= item.duration - 20) {
+          return 0; // Completed
+        }
+        return Math.floor(item.currentTime);
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+    return 0;
+  }
+
+  public removeFromHistory(id: string, videoId?: string) {
+    try {
+      const history = this.getHistory().filter((h: any) => videoId ? h.videoId !== videoId : h.id !== id);
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('stremio_history_changed'));
+      }
     } catch (e) {
       console.warn(e);
     }
   }
 
   public getLibrary(): StremioMetaPreview[] {
+    if (this.libraryCache) {
+      return this.libraryCache;
+    }
     try {
       const raw = localStorage.getItem(LIBRARY_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
+      if (!raw) {
+        this.libraryCache = [];
+        this.libraryIdSet = new Set<string>();
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        this.libraryCache = [];
+        this.libraryIdSet = new Set<string>();
+        return [];
+      }
+
+      // Sanitize: strip out any bloated videos, episodes or stream arrays from previous versions
+      const cleaned: StremioMetaPreview[] = parsed
+        .filter((x) => x && (x.id || x.imdb_id))
+        .map((x) => ({
+          id: String(x.id || x.imdb_id),
+          type: x.type || 'movie',
+          name: x.name || 'Senza titolo',
+          poster: x.poster || '',
+          background: x.background || x.banner || x.poster || '',
+          logo: x.logo,
+          releaseInfo: x.releaseInfo ? String(x.releaseInfo) : undefined,
+          imdbRating: x.imdbRating ? String(x.imdbRating) : undefined,
+          genres: Array.isArray(x.genres) ? x.genres : [],
+          description: x.description ? String(x.description).slice(0, 300) : undefined,
+        }));
+
+      this.libraryCache = cleaned;
+      this.libraryIdSet = new Set(cleaned.map((x) => x.id));
+      return cleaned;
+    } catch (e) {
+      console.warn('Error reading library from localStorage', e);
+      this.libraryCache = [];
+      this.libraryIdSet = new Set<string>();
       return [];
     }
   }
 
-  public toggleLibraryItem(item: StremioMetaPreview): boolean {
+  public toggleLibraryItem(rawItem: StremioMetaPreview | StremioMetaDetail): boolean {
     try {
+      const targetId = String(rawItem?.id || (rawItem as any)?.imdb_id || '').trim();
+      if (!targetId) {
+        console.warn('toggleLibraryItem called without valid item id', rawItem);
+        return false;
+      }
+
       const lib = this.getLibrary();
-      const exists = lib.some((x) => x.id === item.id);
+      const exists = this.libraryIdSet.has(targetId);
+
+      const cleanItem: StremioMetaPreview = {
+        id: targetId,
+        type: rawItem.type || 'movie',
+        name: rawItem.name || 'Senza titolo',
+        poster: rawItem.poster || '',
+        background: rawItem.background || (rawItem as any).banner || rawItem.poster || '',
+        logo: rawItem.logo || undefined,
+        releaseInfo: rawItem.releaseInfo ? String(rawItem.releaseInfo) : undefined,
+        imdbRating: rawItem.imdbRating ? String(rawItem.imdbRating) : undefined,
+        genres: Array.isArray(rawItem.genres) ? rawItem.genres : [],
+        description: rawItem.description ? String(rawItem.description).slice(0, 300) : undefined,
+      };
+
       let updated: StremioMetaPreview[];
       if (exists) {
-        updated = lib.filter((x) => x.id !== item.id);
+        updated = lib.filter((x) => x.id !== targetId);
+        this.libraryIdSet.delete(targetId);
       } else {
-        updated = [item, ...lib];
+        updated = [cleanItem, ...lib.filter((x) => x.id !== targetId)];
+        this.libraryIdSet.add(targetId);
       }
-      localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(updated));
+
+      this.libraryCache = updated;
+
+      try {
+        localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(updated));
+      } catch (storageErr) {
+        console.warn('LocalStorage error while saving library, pruning...', storageErr);
+        try {
+          // If quota reached, save the 60 most recent clean items
+          const pruned = updated.slice(0, 60);
+          localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(pruned));
+        } catch {
+          // Keep in memory if quota is critically full
+        }
+      }
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('stremio_library_changed', {
+            detail: { id: targetId, inLibrary: !exists, item: cleanItem, updated },
+          })
+        );
+      }
       return !exists;
-    } catch {
+    } catch (e) {
+      console.error('Error toggling library item', e);
       return false;
     }
   }
 
-  public isInLibrary(id: string): boolean {
-    return this.getLibrary().some((x) => x.id === id);
+  public isInLibrary(id?: string): boolean {
+    if (!id) return false;
+    const cleanId = String(id).trim();
+    if (!this.libraryCache) {
+      this.getLibrary();
+    }
+    return this.libraryIdSet.has(cleanId);
   }
 }
 

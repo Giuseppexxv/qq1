@@ -2,20 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Play,
   Info,
-  Star,
   ChevronRight,
   ChevronLeft,
   Loader2,
-  Film,
   Tv,
-  Sparkles,
-  Flame,
-  Clapperboard,
-  Trophy,
-  Crown,
-  Medal,
-  Plus,
+  Radio,
+  Film,
+  Star,
   Check,
+  Plus,
 } from 'lucide-react';
 import {
   StremioMetaPreview,
@@ -27,13 +22,33 @@ import { stremioService } from '../services/stremioService';
 import { MediaCard } from './MediaCard';
 import { getReleaseYear } from '../utils/formatters';
 import { optimizeImageUrl } from '../utils/imageOptimizer';
-import { ProviderSelector, STREAMING_PROVIDERS } from './ProviderSelector';
+import { STREAMING_PROVIDERS } from './ProviderSelector';
+import { Top10Row } from './Top10Row';
+import { isAlreadyReleased, filterReleasedItems, rankFamousItems } from '../utils/releaseFilter';
+import {
+  fetchDiscoverCategories,
+  fetchMovieCategories,
+  fetchSeriesCategories,
+  DiscoverCategoryRow,
+} from '../services/dayNightCatalogService';
+import {
+  MOVIE_GENRE_DEFINITIONS,
+  SERIES_GENRE_DEFINITIONS,
+  GenreDefinition,
+} from '../services/genreSubcategoryService';
+import { CategoryCarouselBar } from './CategoryCarouselBar';
+import { CategoryDetailView } from './CategoryDetailView';
+import { getCategoryIconConfig } from '../utils/categoryIcons';
+import { LiveTvBrowser } from './LiveTvBrowser';
+import { LiveChannel } from '../services/liveTvService';
 
 interface CatalogBrowserProps {
-  tab: 'discover' | 'movies' | 'series';
+  tab: 'discover' | 'movies' | 'series' | 'livetv';
   searchQuery: string;
+  onSearchChange?: (val: string) => void;
   onSelectMedia: (item: StremioMetaPreview) => void;
   onPlayStream: (media: StremioMetaDetail, stream?: StremioStream, video?: StremioVideo) => void;
+  onPlayLiveChannel?: (channel: LiveChannel) => void;
 }
 
 // Italian to English mapping for Cinemeta catalog genres
@@ -61,127 +76,328 @@ const GENRE_IT_TO_EN: Record<string, string> = {
   'Reality': 'Reality-TV',
 };
 
-// Movie Categories
-const MOVIE_GENRES = [
-  'Tutti i Film',
-  'Commedia',
-  'Azione',
-  'Animazione',
-  'Fantascienza',
-  'Horror',
-  'Thriller',
-  'Dramma',
-  'Crime',
-  'Avventura',
-  'Famiglia',
-  'Fantasy',
-  'Romantico',
-  'Documentario',
-];
+// Module-level in-memory cache to preserve exact catalog view and avoid re-fetch latency
+interface CatalogModuleCache {
+  hasLoaded: boolean;
+  selectedMovieGenre: string;
+  selectedSeriesGenre: string;
+  selectedMovieProvider: string;
+  selectedSeriesProvider: string;
+  providerCache: Record<string, { movies: StremioMetaPreview[]; series: StremioMetaPreview[] }>;
+  discoverCategories: DiscoverCategoryRow[];
+  movieCategories: DiscoverCategoryRow[];
+  seriesCategories: DiscoverCategoryRow[];
+  top10Movies: StremioMetaPreview[];
+  top10Series: StremioMetaPreview[];
+  nowPlaying: StremioMetaPreview[];
+  trendingMovies: StremioMetaPreview[];
+  trendingSeries: StremioMetaPreview[];
+  popularMovies: StremioMetaPreview[];
+  popularSeries: StremioMetaPreview[];
+  topRatedMovies: StremioMetaPreview[];
+  topRatedSeries: StremioMetaPreview[];
+  netflixMovies: StremioMetaPreview[];
+  primeMovies: StremioMetaPreview[];
+  disneyMovies: StremioMetaPreview[];
+  netflixSeries: StremioMetaPreview[];
+  primeSeries: StremioMetaPreview[];
+  comedyMovies: StremioMetaPreview[];
+  actionMovies: StremioMetaPreview[];
+  animationMovies: StremioMetaPreview[];
+  horrorMovies: StremioMetaPreview[];
+  sciFiMovies: StremioMetaPreview[];
+  thrillerMovies: StremioMetaPreview[];
+  dramaMovies: StremioMetaPreview[];
+  crimeSeries: StremioMetaPreview[];
+  comedySeries: StremioMetaPreview[];
+  actionSeries: StremioMetaPreview[];
+  sciFiSeries: StremioMetaPreview[];
+  dramaSeries: StremioMetaPreview[];
+  animeSeries: StremioMetaPreview[];
+  docuSeries: StremioMetaPreview[];
+  genreGridItems: StremioMetaPreview[];
+  featuredList: StremioMetaPreview[];
+  featuredIndex: number;
+  seriesSubView: 'series' | 'livetv';
+  scrollY: number;
+}
 
-// Series Categories
-const SERIES_GENRES = [
-  'Tutte le Serie',
-  'Dramma',
-  'Commedia',
-  'Azione & Avventura',
-  'Fantascienza & Fantasy',
-  'Crime',
-  'Animazione',
-  'Mistero',
-  'Documentario',
-  'Famiglia',
-  'Reality',
-];
+const catalogCache: CatalogModuleCache = {
+  hasLoaded: false,
+  selectedMovieGenre: 'Tutti',
+  selectedSeriesGenre: 'Tutti',
+  seriesSubView: 'series',
+  selectedMovieProvider: 'global',
+  selectedSeriesProvider: 'global',
+  providerCache: {},
+  discoverCategories: [],
+  movieCategories: [],
+  seriesCategories: [],
+  top10Movies: [],
+  top10Series: [],
+  nowPlaying: [],
+  trendingMovies: [],
+  trendingSeries: [],
+  popularMovies: [],
+  popularSeries: [],
+  topRatedMovies: [],
+  topRatedSeries: [],
+  netflixMovies: [],
+  primeMovies: [],
+  disneyMovies: [],
+  netflixSeries: [],
+  primeSeries: [],
+  comedyMovies: [],
+  actionMovies: [],
+  animationMovies: [],
+  horrorMovies: [],
+  sciFiMovies: [],
+  thrillerMovies: [],
+  dramaMovies: [],
+  crimeSeries: [],
+  comedySeries: [],
+  actionSeries: [],
+  sciFiSeries: [],
+  dramaSeries: [],
+  animeSeries: [],
+  docuSeries: [],
+  genreGridItems: [],
+  featuredList: [],
+  featuredIndex: 0,
+  scrollY: 0,
+};
+
+// Immediate instant-render hydration from persistent cache (0ms start)
+(() => {
+  if (typeof window === 'undefined') return;
+  try {
+    const cachedT10M = stremioService.getCachedCatalog('topstreaming.italy', 'movie', 'popular-movie-global');
+    const cachedT10S = stremioService.getCachedCatalog('topstreaming.italy', 'series', 'popular-series-global');
+    if (cachedT10M && cachedT10M.length > 0) {
+      catalogCache.top10Movies = cachedT10M;
+      catalogCache.hasLoaded = true;
+    }
+    if (cachedT10S && cachedT10S.length > 0) {
+      catalogCache.top10Series = cachedT10S;
+      catalogCache.hasLoaded = true;
+    }
+    if (cachedT10M && cachedT10S && catalogCache.featuredList.length === 0) {
+      catalogCache.featuredList = [...cachedT10M.slice(0, 4), ...cachedT10S.slice(0, 4)];
+    }
+    const savedDiscover = localStorage.getItem('istream_cat_all_v5');
+    if (savedDiscover && catalogCache.discoverCategories.length === 0) {
+      const parsed = JSON.parse(savedDiscover);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        catalogCache.discoverCategories = parsed;
+      }
+    }
+    const savedMovies = localStorage.getItem('istream_cat_movie_v5');
+    if (savedMovies && catalogCache.movieCategories.length === 0) {
+      const parsed = JSON.parse(savedMovies);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        catalogCache.movieCategories = parsed;
+      }
+    }
+    const savedSeries = localStorage.getItem('istream_cat_series_v5');
+    if (savedSeries && catalogCache.seriesCategories.length === 0) {
+      const parsed = JSON.parse(savedSeries);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        catalogCache.seriesCategories = parsed;
+      }
+    }
+  } catch {}
+})();
 
 export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
   tab,
   searchQuery,
   onSelectMedia,
   onPlayStream,
+  onPlayLiveChannel,
 }) => {
-  // Category filter state per tab
-  const [selectedMovieGenre, setSelectedMovieGenre] = useState('Tutti i Film');
-  const [selectedSeriesGenre, setSelectedSeriesGenre] = useState('Tutte le Serie');
+  // Category filter state per tab (restored immediately from cache if available)
+  const [selectedMovieGenre, setSelectedMovieGenre] = useState(catalogCache.selectedMovieGenre);
+  const [selectedSeriesGenre, setSelectedSeriesGenre] = useState(catalogCache.selectedSeriesGenre);
+  const [seriesSubView, setSeriesSubView] = useState<'series' | 'livetv'>(catalogCache.seriesSubView || 'series');
 
-  // Dynamic Provider Top 10 selector state (netflix, prime, disney, apple, now, paramount, max, global)
-  const [selectedProvider, setSelectedProvider] = useState<string>('netflix');
+  // Dynamic Provider Top 10 selector state for Movies and Series (defaults to 'global')
+  const [selectedMovieProvider, setSelectedMovieProvider] = useState<string>(catalogCache.selectedMovieProvider);
+  const [selectedSeriesProvider, setSelectedSeriesProvider] = useState<string>(catalogCache.selectedSeriesProvider);
   const [providerCache, setProviderCache] = useState<
     Record<string, { movies: StremioMetaPreview[]; series: StremioMetaPreview[] }>
-  >({});
+  >(catalogCache.providerCache);
   const [providerLoading, setProviderLoading] = useState<boolean>(false);
 
-  // Shared / Discover Rows
-  const [top10Movies, setTop10Movies] = useState<StremioMetaPreview[]>([]);
-  const [top10Series, setTop10Series] = useState<StremioMetaPreview[]>([]);
-  const [nowPlaying, setNowPlaying] = useState<StremioMetaPreview[]>([]);
-  const [trendingMovies, setTrendingMovies] = useState<StremioMetaPreview[]>([]);
-  const [trendingSeries, setTrendingSeries] = useState<StremioMetaPreview[]>([]);
-  const [popularMovies, setPopularMovies] = useState<StremioMetaPreview[]>([]);
-  const [popularSeries, setPopularSeries] = useState<StremioMetaPreview[]>([]);
-  const [topRatedMovies, setTopRatedMovies] = useState<StremioMetaPreview[]>([]);
-  const [topRatedSeries, setTopRatedSeries] = useState<StremioMetaPreview[]>([]);
+  // Shared / Discover / Movies / Series Categories
+  const [discoverCategories, setDiscoverCategories] = useState<DiscoverCategoryRow[]>(catalogCache.discoverCategories);
+  const [movieCategories, setMovieCategories] = useState<DiscoverCategoryRow[]>(catalogCache.movieCategories);
+  const [seriesCategories, setSeriesCategories] = useState<DiscoverCategoryRow[]>(catalogCache.seriesCategories);
+  const [categoriesLoading, setCategoriesLoading] = useState<boolean>(false);
+
+  const [top10Movies, setTop10Movies] = useState<StremioMetaPreview[]>(catalogCache.top10Movies);
+  const [top10Series, setTop10Series] = useState<StremioMetaPreview[]>(catalogCache.top10Series);
+  const [nowPlaying, setNowPlaying] = useState<StremioMetaPreview[]>(catalogCache.nowPlaying);
+  const [trendingMovies, setTrendingMovies] = useState<StremioMetaPreview[]>(catalogCache.trendingMovies);
+  const [trendingSeries, setTrendingSeries] = useState<StremioMetaPreview[]>(catalogCache.trendingSeries);
+  const [popularMovies, setPopularMovies] = useState<StremioMetaPreview[]>(catalogCache.popularMovies);
+  const [popularSeries, setPopularSeries] = useState<StremioMetaPreview[]>(catalogCache.popularSeries);
+  const [topRatedMovies, setTopRatedMovies] = useState<StremioMetaPreview[]>(catalogCache.topRatedMovies);
+  const [topRatedSeries, setTopRatedSeries] = useState<StremioMetaPreview[]>(catalogCache.topRatedSeries);
 
   // Platform rows
-  const [netflixMovies, setNetflixMovies] = useState<StremioMetaPreview[]>([]);
-  const [primeMovies, setPrimeMovies] = useState<StremioMetaPreview[]>([]);
-  const [disneyMovies, setDisneyMovies] = useState<StremioMetaPreview[]>([]);
-  const [netflixSeries, setNetflixSeries] = useState<StremioMetaPreview[]>([]);
-  const [primeSeries, setPrimeSeries] = useState<StremioMetaPreview[]>([]);
+  const [netflixMovies, setNetflixMovies] = useState<StremioMetaPreview[]>(catalogCache.netflixMovies);
+  const [primeMovies, setPrimeMovies] = useState<StremioMetaPreview[]>(catalogCache.primeMovies);
+  const [disneyMovies, setDisneyMovies] = useState<StremioMetaPreview[]>(catalogCache.disneyMovies);
+  const [netflixSeries, setNetflixSeries] = useState<StremioMetaPreview[]>(catalogCache.netflixSeries);
+  const [primeSeries, setPrimeSeries] = useState<StremioMetaPreview[]>(catalogCache.primeSeries);
 
   // Movie Genre Specific Rows
-  const [comedyMovies, setComedyMovies] = useState<StremioMetaPreview[]>([]);
-  const [actionMovies, setActionMovies] = useState<StremioMetaPreview[]>([]);
-  const [animationMovies, setAnimationMovies] = useState<StremioMetaPreview[]>([]);
-  const [horrorMovies, setHorrorMovies] = useState<StremioMetaPreview[]>([]);
-  const [sciFiMovies, setSciFiMovies] = useState<StremioMetaPreview[]>([]);
-  const [thrillerMovies, setThrillerMovies] = useState<StremioMetaPreview[]>([]);
-  const [dramaMovies, setDramaMovies] = useState<StremioMetaPreview[]>([]);
+  const [comedyMovies, setComedyMovies] = useState<StremioMetaPreview[]>(catalogCache.comedyMovies);
+  const [actionMovies, setActionMovies] = useState<StremioMetaPreview[]>(catalogCache.actionMovies);
+  const [animationMovies, setAnimationMovies] = useState<StremioMetaPreview[]>(catalogCache.animationMovies);
+  const [horrorMovies, setHorrorMovies] = useState<StremioMetaPreview[]>(catalogCache.horrorMovies);
+  const [sciFiMovies, setSciFiMovies] = useState<StremioMetaPreview[]>(catalogCache.sciFiMovies);
+  const [thrillerMovies, setThrillerMovies] = useState<StremioMetaPreview[]>(catalogCache.thrillerMovies);
+  const [dramaMovies, setDramaMovies] = useState<StremioMetaPreview[]>(catalogCache.dramaMovies);
 
   // Series Genre Specific Rows
-  const [crimeSeries, setCrimeSeries] = useState<StremioMetaPreview[]>([]);
-  const [comedySeries, setComedySeries] = useState<StremioMetaPreview[]>([]);
-  const [actionSeries, setActionSeries] = useState<StremioMetaPreview[]>([]);
-  const [sciFiSeries, setSciFiSeries] = useState<StremioMetaPreview[]>([]);
-  const [dramaSeries, setDramaSeries] = useState<StremioMetaPreview[]>([]);
-  const [animeSeries, setAnimeSeries] = useState<StremioMetaPreview[]>([]);
-  const [docuSeries, setDocuSeries] = useState<StremioMetaPreview[]>([]);
+  const [crimeSeries, setCrimeSeries] = useState<StremioMetaPreview[]>(catalogCache.crimeSeries);
+  const [comedySeries, setComedySeries] = useState<StremioMetaPreview[]>(catalogCache.comedySeries);
+  const [actionSeries, setActionSeries] = useState<StremioMetaPreview[]>(catalogCache.actionSeries);
+  const [sciFiSeries, setSciFiSeries] = useState<StremioMetaPreview[]>(catalogCache.sciFiSeries);
+  const [dramaSeries, setDramaSeries] = useState<StremioMetaPreview[]>(catalogCache.dramaSeries);
+  const [animeSeries, setAnimeSeries] = useState<StremioMetaPreview[]>(catalogCache.animeSeries);
+  const [docuSeries, setDocuSeries] = useState<StremioMetaPreview[]>(catalogCache.docuSeries);
 
   // Filtered Genre Grid Results (when specific genre is picked)
-  const [genreGridItems, setGenreGridItems] = useState<StremioMetaPreview[]>([]);
+  const [genreGridItems, setGenreGridItems] = useState<StremioMetaPreview[]>(catalogCache.genreGridItems);
   const [genreGridLoading, setGenreGridLoading] = useState(false);
 
   // Featured Hero Carousel
-  const [featuredList, setFeaturedList] = useState<StremioMetaPreview[]>([]);
-  const [featuredIndex, setFeaturedIndex] = useState(0);
+  const [featuredList, setFeaturedList] = useState<StremioMetaPreview[]>(catalogCache.featuredList);
+  const [featuredIndex, setFeaturedIndex] = useState(catalogCache.featuredIndex);
   const [isHeroHovered, setIsHeroHovered] = useState(false);
-  const [heroProgress, setHeroProgress] = useState(0);
 
   const [searchResults, setSearchResults] = useState<StremioMetaPreview[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!catalogCache.hasLoaded);
   const [searching, setSearching] = useState(false);
 
-  const SLIDE_DURATION = 4000;
+  // Sync state to memory cache
+  useEffect(() => {
+    catalogCache.selectedMovieGenre = selectedMovieGenre;
+    catalogCache.selectedSeriesGenre = selectedSeriesGenre;
+    catalogCache.seriesSubView = seriesSubView;
+    catalogCache.selectedMovieProvider = selectedMovieProvider;
+    catalogCache.selectedSeriesProvider = selectedSeriesProvider;
+    catalogCache.providerCache = providerCache;
+    catalogCache.discoverCategories = discoverCategories;
+    catalogCache.movieCategories = movieCategories;
+    catalogCache.seriesCategories = seriesCategories;
+    catalogCache.top10Movies = top10Movies;
+    catalogCache.top10Series = top10Series;
+    catalogCache.nowPlaying = nowPlaying;
+    catalogCache.trendingMovies = trendingMovies;
+    catalogCache.trendingSeries = trendingSeries;
+    catalogCache.popularMovies = popularMovies;
+    catalogCache.popularSeries = popularSeries;
+    catalogCache.topRatedMovies = topRatedMovies;
+    catalogCache.topRatedSeries = topRatedSeries;
+    catalogCache.netflixMovies = netflixMovies;
+    catalogCache.primeMovies = primeMovies;
+    catalogCache.disneyMovies = disneyMovies;
+    catalogCache.netflixSeries = netflixSeries;
+    catalogCache.primeSeries = primeSeries;
+    catalogCache.comedyMovies = comedyMovies;
+    catalogCache.actionMovies = actionMovies;
+    catalogCache.animationMovies = animationMovies;
+    catalogCache.horrorMovies = horrorMovies;
+    catalogCache.sciFiMovies = sciFiMovies;
+    catalogCache.thrillerMovies = thrillerMovies;
+    catalogCache.dramaMovies = dramaMovies;
+    catalogCache.crimeSeries = crimeSeries;
+    catalogCache.comedySeries = comedySeries;
+    catalogCache.actionSeries = actionSeries;
+    catalogCache.sciFiSeries = sciFiSeries;
+    catalogCache.dramaSeries = dramaSeries;
+    catalogCache.animeSeries = animeSeries;
+    catalogCache.docuSeries = docuSeries;
+    catalogCache.genreGridItems = genreGridItems;
+    catalogCache.featuredList = featuredList;
+    catalogCache.featuredIndex = featuredIndex;
+    if (discoverCategories.length > 0 || top10Movies.length > 0) {
+      catalogCache.hasLoaded = true;
+    }
+  }, [
+    selectedMovieGenre,
+    selectedSeriesGenre,
+    seriesSubView,
+    selectedMovieProvider,
+    selectedSeriesProvider,
+    providerCache,
+    discoverCategories,
+    movieCategories,
+    seriesCategories,
+    top10Movies,
+    top10Series,
+    featuredList,
+    featuredIndex,
+  ]);
 
-  // Auto advance featured hero carousel with continuous time progress in pill
+  // Preserve scroll position when entering/leaving playback
+  useEffect(() => {
+    if (catalogCache.scrollY > 0) {
+      const savedY = catalogCache.scrollY;
+      const t = setTimeout(() => {
+        window.scrollTo({ top: savedY, behavior: 'instant' });
+      }, 50);
+      return () => {
+        clearTimeout(t);
+        catalogCache.scrollY = window.scrollY;
+      };
+    }
+
+    return () => {
+      catalogCache.scrollY = window.scrollY;
+    };
+  }, []);
+
+  // Auto advance featured hero carousel every 5 seconds (zero CPU loop when tab is backgrounded)
   useEffect(() => {
     if (featuredList.length <= 1) return;
     if (isHeroHovered) return;
 
-    const intervalMs = 50;
-    const step = (intervalMs / SLIDE_DURATION) * 100;
+    let timer: NodeJS.Timeout | null = null;
 
-    const timer = setInterval(() => {
-      setHeroProgress((prev) => {
-        if (prev >= 100) {
+    const startTimer = () => {
+      if (!timer && !document.hidden) {
+        timer = setInterval(() => {
           setFeaturedIndex((current) => (current + 1) % featuredList.length);
-          return 0;
-        }
-        return prev + step;
-      });
-    }, intervalMs);
+        }, 5000);
+      }
+    };
 
-    return () => clearInterval(timer);
+    const stopTimer = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopTimer();
+      } else {
+        startTimer();
+      }
+    };
+
+    startTimer();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      stopTimer();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [featuredList.length, isHeroHovered]);
 
   // Load Primary Catalogs based on Active Tab
@@ -192,9 +408,9 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
 
   // Load Filtered Grid when a single genre is selected in Movies or Series
   useEffect(() => {
-    if (tab === 'movies' && selectedMovieGenre !== 'Tutti i Film') {
+    if (tab === 'movies' && selectedMovieGenre !== 'Tutti') {
       loadSpecificGenre('movie', selectedMovieGenre);
-    } else if (tab === 'series' && selectedSeriesGenre !== 'Tutte le Serie') {
+    } else if (tab === 'series' && selectedSeriesGenre !== 'Tutti') {
       loadSpecificGenre('series', selectedSeriesGenre);
     }
   }, [tab, selectedMovieGenre, selectedSeriesGenre]);
@@ -210,54 +426,58 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
     setSearching(true);
     const delayDebounce = setTimeout(() => {
       const q = searchQuery.trim();
-      if (tab === 'movies') {
-        stremioService
-          .fetchCatalog('official.catalog', 'movie', 'top', { search: q })
-          .then((res) => {
-            setSearchResults(res);
-            setSearching(false);
-          })
-          .catch(() => setSearching(false));
-      } else if (tab === 'series') {
-        stremioService
-          .fetchCatalog('official.catalog', 'series', 'top', { search: q })
-          .then((res) => {
-            setSearchResults(res);
-            setSearching(false);
-          })
-          .catch(() => setSearching(false));
-      } else {
-        // Discover: search both movies and series with Cinemeta
-        Promise.all([
-          stremioService.fetchCatalog('official.catalog', 'movie', 'top', { search: q }),
-          stremioService.fetchCatalog('official.catalog', 'series', 'top', { search: q }),
-        ])
-          .then(([mov, ser]) => {
-            const combined = [...mov, ...ser];
-            const seen = new Set<string>();
-            const unique = combined.filter((it) => {
-              if (!it || !it.id || seen.has(it.id)) return false;
-              seen.add(it.id);
-              return true;
-            });
-            setSearchResults(unique);
-            setSearching(false);
-          })
-          .catch(() => setSearching(false));
-      }
+      // Global search across both movies and series regardless of active tab
+      Promise.all([
+        stremioService.fetchCatalog('official.catalog', 'movie', 'top', { search: q }),
+        stremioService.fetchCatalog('official.catalog', 'series', 'top', { search: q }),
+      ])
+        .then(([mov, ser]) => {
+          const combined = [...(mov || []), ...(ser || [])];
+          const seen = new Set<string>();
+          const unique = combined.filter((it) => {
+            if (!it || !it.id || seen.has(it.id)) return false;
+            if (!isAlreadyReleased(it)) return false;
+            seen.add(it.id);
+            return true;
+          });
+          setSearchResults(rankFamousItems(unique, q));
+          setSearching(false);
+        })
+        .catch(() => setSearching(false));
     }, 250);
 
     return () => clearTimeout(delayDebounce);
-  }, [searchQuery, tab]);
+  }, [searchQuery]);
 
   const loadSpecificGenre = async (type: 'movie' | 'series', genre: string) => {
     setGenreGridLoading(true);
     try {
       const cinemetaGenre = GENRE_IT_TO_EN[genre] || genre;
-      const items = await stremioService.fetchCatalog('official.catalog', type, 'top', {
-        genre: cinemetaGenre,
+      const fetchPromises: Promise<StremioMetaPreview[]>[] = [
+        stremioService.fetchCatalog('official.catalog', type, 'top', { genre: cinemetaGenre }),
+        stremioService.fetchCatalog('official.catalog', type, 'top', { genre: cinemetaGenre, skip: 50 }).catch(() => []),
+        stremioService.fetchCatalog('official.catalog', type, 'top', { genre: cinemetaGenre, skip: 100 }).catch(() => []),
+      ];
+
+      // Enrich with superhero and blockbuster titles if relevant
+      if (['Azione', 'Fantascienza', 'Azione & Avventura', 'Fantascienza & Fantasy', 'Animazione'].includes(genre)) {
+        fetchPromises.push(
+          stremioService.fetchCatalog('official.catalog', type, 'top', { search: 'spider-man' }).catch(() => []),
+          stremioService.fetchCatalog('official.catalog', type, 'top', { search: 'batman' }).catch(() => []),
+          stremioService.fetchCatalog('official.catalog', type, 'top', { search: 'avengers' }).catch(() => []),
+          stremioService.fetchCatalog('official.catalog', type, 'top', { search: type === 'movie' ? 'deadpool' : 'the boys' }).catch(() => [])
+        );
+      }
+
+      const results = await Promise.all(fetchPromises);
+      const combined = results.flat();
+      const seen = new Set<string>();
+      const deduped = combined.filter((it) => {
+        if (!it || !it.id || seen.has(it.id)) return false;
+        seen.add(it.id);
+        return true;
       });
-      setGenreGridItems(items);
+      setGenreGridItems(filterReleasedItems(deduped));
     } catch (e) {
       console.warn('Failed to load genre items', e);
     } finally {
@@ -266,10 +486,11 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
   };
 
   const setAndEnrichFeaturedList = (items: StremioMetaPreview[]) => {
-    setFeaturedList(items);
+    const releasedOnly = filterReleasedItems(items);
+    setFeaturedList(releasedOnly);
     // Fetch detailed meta in background to obtain transparent official logo if available
     Promise.all(
-      items.slice(0, 8).map(async (item) => {
+      releasedOnly.slice(0, 8).map(async (item) => {
         try {
           const meta = await stremioService.fetchMeta(item.type, item.id);
           if (meta && meta.logo) {
@@ -286,7 +507,10 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
   };
 
   const fetchProviderTop10 = async (providerId: string) => {
-    if (providerCache[providerId] && providerCache[providerId].movies.length > 0) {
+    if (
+      providerCache[providerId] &&
+      (providerCache[providerId].movies.length > 0 || providerCache[providerId].series.length > 0)
+    ) {
       return providerCache[providerId];
     }
 
@@ -301,8 +525,8 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
       ]);
 
       const data = {
-        movies: movies.slice(0, 10),
-        series: series.slice(0, 10),
+        movies,
+        series,
       };
 
       setProviderCache((prev) => ({ ...prev, [providerId]: data }));
@@ -315,88 +539,152 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
     }
   };
 
-  const handleSelectProvider = (providerId: string) => {
-    setSelectedProvider(providerId);
+  const handleSelectMovieProvider = (providerId: string) => {
+    setSelectedMovieProvider(providerId);
+    fetchProviderTop10(providerId);
+  };
+
+  const handleSelectSeriesProvider = (providerId: string) => {
+    setSelectedSeriesProvider(providerId);
     fetchProviderTop10(providerId);
   };
 
   useEffect(() => {
-    fetchProviderTop10(selectedProvider);
-  }, [selectedProvider]);
+    if (selectedMovieProvider !== 'global') {
+      fetchProviderTop10(selectedMovieProvider);
+    }
+  }, [selectedMovieProvider]);
+
+  useEffect(() => {
+    if (selectedSeriesProvider !== 'global') {
+      fetchProviderTop10(selectedSeriesProvider);
+    }
+  }, [selectedSeriesProvider]);
+
+  // Load Categories per tab (Discover = 50/50, Movies = 100% movies, Series = 100% series)
+  useEffect(() => {
+    let isMounted = true;
+    if (tab === 'discover') {
+      if (discoverCategories.length === 0) setCategoriesLoading(true);
+      fetchDiscoverCategories()
+        .then((cats) => {
+          if (isMounted) {
+            setDiscoverCategories(cats);
+            setCategoriesLoading(false);
+          }
+        })
+        .catch(() => {
+          if (isMounted) setCategoriesLoading(false);
+        });
+    } else if (tab === 'movies') {
+      if (movieCategories.length === 0) setCategoriesLoading(true);
+      fetchMovieCategories()
+        .then((cats) => {
+          if (isMounted) {
+            setMovieCategories(cats);
+            setCategoriesLoading(false);
+          }
+        })
+        .catch(() => {
+          if (isMounted) setCategoriesLoading(false);
+        });
+    } else if (tab === 'series') {
+      if (seriesCategories.length === 0) setCategoriesLoading(true);
+      fetchSeriesCategories()
+        .then((cats) => {
+          if (isMounted) {
+            setSeriesCategories(cats);
+            setCategoriesLoading(false);
+          }
+        })
+        .catch(() => {
+          if (isMounted) setCategoriesLoading(false);
+        });
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [tab]);
 
   const loadPrimaryData = async () => {
-    setLoading(true);
+    if (!catalogCache.hasLoaded) {
+      setLoading(true);
+    }
 
     try {
       if (tab === 'discover') {
-        const [t10m, t10s, trendM, trendS, topM, netM, netS, primeM, disM] =
-          await Promise.all([
-            stremioService.fetchCatalog('topstreaming.italy', 'movie', 'popular-movie-global'),
-            stremioService.fetchCatalog('topstreaming.italy', 'series', 'popular-series-global'),
-            stremioService.fetchCatalog('official.catalog', 'movie', 'top'),
-            stremioService.fetchCatalog('official.catalog', 'series', 'top'),
-            stremioService.fetchCatalog('official.catalog', 'movie', 'imdbRating'),
-            stremioService.fetchCatalog('topstreaming.italy', 'movie', 'netflix-movies-italy'),
-            stremioService.fetchCatalog('topstreaming.italy', 'series', 'netflix-series-italy'),
-            stremioService.fetchCatalog('topstreaming.italy', 'movie', 'amazon-prime-movies-italy'),
-            stremioService.fetchCatalog('topstreaming.italy', 'movie', 'disney-movies-italy'),
-          ]);
+        // Fast-path 1: Fetch Top 10 first to render Hero banner and top rows immediately (< 200ms)
+        const [t10m, t10s] = await Promise.all([
+          stremioService.fetchCatalog('topstreaming.italy', 'movie', 'popular-movie-global'),
+          stremioService.fetchCatalog('topstreaming.italy', 'series', 'popular-series-global'),
+        ]);
 
         if (t10m.length > 0) setTop10Movies(t10m);
         if (t10s.length > 0) setTop10Series(t10s);
-        if (trendM.length > 0) {
-          setTrendingMovies(trendM);
-          setNowPlaying(trendM);
-        }
-        if (trendS.length > 0) setTrendingSeries(trendS);
-        if (topM.length > 0) setTopRatedMovies(topM);
-        if (netM.length > 0) setNetflixMovies(netM);
-        if (netS.length > 0) setNetflixSeries(netS);
-        if (primeM.length > 0) setPrimeMovies(primeM);
-        if (disM.length > 0) setDisneyMovies(disM);
+        setLoading(false);
 
-        // Preload providerCache for instant switching between Netflix and Globale
-        setProviderCache((prev) => ({
-          ...prev,
-          global: { movies: t10m.slice(0, 10), series: t10s.slice(0, 10) },
-          netflix: { movies: netM.slice(0, 10), series: netS.slice(0, 10) },
-        }));
-
-        // Featured carousel list for Discover (top movies & series combined)
         const combined = [...t10m.slice(0, 4), ...t10s.slice(0, 4)].filter(Boolean);
         if (combined.length > 0) {
           setAndEnrichFeaturedList(combined);
-        } else if (trendM.length > 0) {
-          setAndEnrichFeaturedList(trendM.slice(0, 8));
         }
+
+        // Fast-path 2: Load platform rows progressively in the background without blocking the UI
+        Promise.all([
+          stremioService.fetchCatalog('official.catalog', 'movie', 'top'),
+          stremioService.fetchCatalog('official.catalog', 'series', 'top'),
+          stremioService.fetchCatalog('official.catalog', 'movie', 'imdbRating'),
+          stremioService.fetchCatalog('topstreaming.italy', 'movie', 'netflix-movies-italy'),
+          stremioService.fetchCatalog('topstreaming.italy', 'series', 'netflix-series-italy'),
+          stremioService.fetchCatalog('topstreaming.italy', 'movie', 'amazon-prime-movies-italy'),
+          stremioService.fetchCatalog('topstreaming.italy', 'movie', 'disney-movies-italy'),
+        ]).then(([trendM, trendS, topM, netM, netS, primeM, disM]) => {
+          if (trendM.length > 0) {
+            setTrendingMovies(trendM);
+            setNowPlaying(trendM);
+          }
+          if (trendS.length > 0) setTrendingSeries(trendS);
+          if (topM.length > 0) setTopRatedMovies(topM);
+          if (netM.length > 0) setNetflixMovies(netM);
+          if (netS.length > 0) setNetflixSeries(netS);
+          if (primeM.length > 0) setPrimeMovies(primeM);
+          if (disM.length > 0) setDisneyMovies(disM);
+
+          setProviderCache((prev) => ({
+            ...prev,
+            global: { movies: t10m.slice(0, 10), series: t10s.slice(0, 10) },
+            netflix: { movies: netM.slice(0, 10), series: netS.slice(0, 10) },
+          }));
+        }).catch(() => {});
       } else if (tab === 'movies') {
-        // Load Core Movie rows from Top Streaming Italia and Cinemeta
-        const [t10m, popM, topM, netM, primeM, disM] = await Promise.all([
-          stremioService.fetchCatalog('topstreaming.italy', 'movie', 'popular-movie-global'),
+        // Fast-path 1: Fetch Movie Top 10 first to render immediately
+        const t10m = await stremioService.fetchCatalog('topstreaming.italy', 'movie', 'popular-movie-global');
+        if (t10m.length > 0) {
+          setTop10Movies(t10m);
+          setAndEnrichFeaturedList(t10m.slice(0, 8));
+          setLoading(false);
+        }
+
+        // Fast-path 2: Load secondary movies in the background progressively
+        Promise.all([
           stremioService.fetchCatalog('official.catalog', 'movie', 'top'),
           stremioService.fetchCatalog('official.catalog', 'movie', 'imdbRating'),
           stremioService.fetchCatalog('topstreaming.italy', 'movie', 'netflix-movies-italy'),
           stremioService.fetchCatalog('topstreaming.italy', 'movie', 'amazon-prime-movies-italy'),
           stremioService.fetchCatalog('topstreaming.italy', 'movie', 'disney-movies-italy'),
-        ]);
+        ]).then(([popM, topM, netM, primeM, disM]) => {
+          if (popM.length > 0) {
+            setPopularMovies(popM);
+            setTrendingMovies(popM);
+            setNowPlaying(popM);
+          }
+          if (topM.length > 0) setTopRatedMovies(topM);
+          if (netM.length > 0) setNetflixMovies(netM);
+          if (primeM.length > 0) setPrimeMovies(primeM);
+          if (disM.length > 0) setDisneyMovies(disM);
+        }).catch(() => {});
 
-        if (t10m.length > 0) {
-          setTop10Movies(t10m);
-          setAndEnrichFeaturedList(t10m.slice(0, 8));
-        } else if (popM.length > 0) {
-          setAndEnrichFeaturedList(popM.slice(0, 8));
-        }
-        if (popM.length > 0) {
-          setPopularMovies(popM);
-          setTrendingMovies(popM);
-          setNowPlaying(popM);
-        }
-        if (topM.length > 0) setTopRatedMovies(topM);
-        if (netM.length > 0) setNetflixMovies(netM);
-        if (primeM.length > 0) setPrimeMovies(primeM);
-        if (disM.length > 0) setDisneyMovies(disM);
-
-        // Load Movie Categories from Cinemeta
+        // Fast-path 3: Genre rows loaded in the background
         Promise.all([
           stremioService.fetchCatalog('official.catalog', 'movie', 'top', { genre: 'Comedy' }),
           stremioService.fetchCatalog('official.catalog', 'movie', 'top', { genre: 'Action' }),
@@ -415,30 +703,31 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
           if (drama.length > 0) setDramaMovies(drama);
         }).catch(() => {});
       } else if (tab === 'series') {
-        // Load Core Series rows from Top Streaming Italia and Cinemeta
-        const [t10s, popS, topS, netS, primeS] = await Promise.all([
-          stremioService.fetchCatalog('topstreaming.italy', 'series', 'popular-series-global'),
+        // Fast-path 1: Fetch Series Top 10 first to render immediately
+        const t10s = await stremioService.fetchCatalog('topstreaming.italy', 'series', 'popular-series-global');
+        if (t10s.length > 0) {
+          setTop10Series(t10s);
+          setAndEnrichFeaturedList(t10s.slice(0, 8));
+          setLoading(false);
+        }
+
+        // Fast-path 2: Load secondary series in the background progressively
+        Promise.all([
           stremioService.fetchCatalog('official.catalog', 'series', 'top'),
           stremioService.fetchCatalog('official.catalog', 'series', 'imdbRating'),
           stremioService.fetchCatalog('topstreaming.italy', 'series', 'netflix-series-italy'),
           stremioService.fetchCatalog('topstreaming.italy', 'series', 'amazon-prime-series-italy'),
-        ]);
+        ]).then(([popS, topS, netS, primeS]) => {
+          if (popS.length > 0) {
+            setPopularSeries(popS);
+            setTrendingSeries(popS);
+          }
+          if (topS.length > 0) setTopRatedSeries(topS);
+          if (netS.length > 0) setNetflixSeries(netS);
+          if (primeS.length > 0) setPrimeSeries(primeS);
+        }).catch(() => {});
 
-        if (t10s.length > 0) {
-          setTop10Series(t10s);
-          setAndEnrichFeaturedList(t10s.slice(0, 8));
-        } else if (popS.length > 0) {
-          setAndEnrichFeaturedList(popS.slice(0, 8));
-        }
-        if (popS.length > 0) {
-          setPopularSeries(popS);
-          setTrendingSeries(popS);
-        }
-        if (topS.length > 0) setTopRatedSeries(topS);
-        if (netS.length > 0) setNetflixSeries(netS);
-        if (primeS.length > 0) setPrimeSeries(primeS);
-
-        // Load Series Categories from Cinemeta
+        // Fast-path 3: Genre series loaded in the background
         Promise.all([
           stremioService.fetchCatalog('official.catalog', 'series', 'top', { genre: 'Crime' }),
           stremioService.fetchCatalog('official.catalog', 'series', 'top', { genre: 'Comedy' }),
@@ -471,7 +760,20 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
     if (currentHero) {
       setHeroInLibrary(stremioService.isInLibrary(currentHero.id));
     }
-  }, [currentHero]);
+
+    const handleLibraryUpdate = () => {
+      if (currentHero) {
+        setHeroInLibrary(stremioService.isInLibrary(currentHero.id));
+      }
+    };
+
+    window.addEventListener('stremio_library_changed', handleLibraryUpdate);
+    window.addEventListener('storage', handleLibraryUpdate);
+    return () => {
+      window.removeEventListener('stremio_library_changed', handleLibraryUpdate);
+      window.removeEventListener('storage', handleLibraryUpdate);
+    };
+  }, [currentHero?.id]);
 
   const handleHeroLibraryToggle = () => {
     if (!currentHero) return;
@@ -486,39 +788,42 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
 
   const handleSelectHeroSlide = (idx: number) => {
     setFeaturedIndex(idx);
-    setHeroProgress(0);
   };
 
   const handlePrevHero = () => {
     if (featuredList.length <= 1) return;
     setFeaturedIndex((prev) => (prev === 0 ? featuredList.length - 1 : prev - 1));
-    setHeroProgress(0);
   };
 
   const handleNextHero = () => {
     if (featuredList.length <= 1) return;
     setFeaturedIndex((prev) => (prev + 1) % featuredList.length);
-    setHeroProgress(0);
   };
 
-  const handleCardQuickPlay = (m: StremioMetaPreview) => {
-    onPlayStream(m as StremioMetaDetail);
-  };
+  const handleCardQuickPlay = React.useCallback((m: StremioMetaPreview) => {
+    onSelectMedia(m);
+  }, [onSelectMedia]);
 
-  const currentProviderConfig =
-    STREAMING_PROVIDERS.find((p) => p.id === selectedProvider) || STREAMING_PROVIDERS[0];
-  const currentProviderData = providerCache[selectedProvider] || { movies: [], series: [] };
-  const providerTop10Movies = currentProviderData.movies.length > 0
-    ? currentProviderData.movies
-    : (selectedProvider === 'global' ? top10Movies.slice(0, 10) : netflixMovies.slice(0, 10));
-  const providerTop10Series = currentProviderData.series.length > 0
-    ? currentProviderData.series
-    : (selectedProvider === 'global' ? top10Series.slice(0, 10) : netflixSeries.slice(0, 10));
+  const movieProviderData = providerCache[selectedMovieProvider];
+  const providerTop10Movies =
+    movieProviderData && movieProviderData.movies.length > 0
+      ? movieProviderData.movies
+      : selectedMovieProvider === 'global'
+      ? top10Movies
+      : netflixMovies;
+
+  const seriesProviderData = providerCache[selectedSeriesProvider];
+  const providerTop10Series =
+    seriesProviderData && seriesProviderData.series.length > 0
+      ? seriesProviderData.series
+      : selectedSeriesProvider === 'global'
+      ? top10Series
+      : netflixSeries;
 
   // Search Results View
   if (searchQuery.trim()) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 pt-24 sm:pt-28 pb-12 space-y-6">
+      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 pt-24 sm:pt-28 pb-12 space-y-6">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
             <span>Risultati per "{searchQuery}"</span>
@@ -554,27 +859,31 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
   }
 
   return (
-    <div className="space-y-10 pb-20 bg-black min-h-screen">
+    <div className="space-y-6 sm:space-y-10 pb-20 bg-black min-h-screen">
       {/* ==================== FEATURED HERO CAROUSEL ==================== */}
       {currentHero && (
         <div
-          className="relative w-full min-h-[82vh] sm:min-h-[88vh] md:min-h-[92vh] flex items-end pt-24 sm:pt-28 pb-10 sm:pb-14 select-none overflow-hidden"
+          className="relative w-full min-h-[72vh] sm:min-h-[88vh] md:min-h-[92vh] flex items-end pt-28 sm:pt-32 pb-16 landscape:pb-12 sm:pb-16 select-none overflow-hidden"
           onMouseEnter={() => setIsHeroHovered(true)}
           onMouseLeave={() => setIsHeroHovered(false)}
         >
-          {/* Full Screen Cinematic Backdrop (Starts at absolute top 0, Ultra Vivid) */}
-          <div className="absolute inset-0 overflow-hidden">
+          {/* Full Screen Cinematic Backdrop (Poster for mobile portrait starting at middle of navbar selector, Background banner for desktop/landscape) */}
+          <div className="absolute inset-0 top-7 sm:top-0 overflow-hidden">
             <img
               key={currentHero.id}
               src={
-                optimizeImageUrl(currentHero.background, 'background') ||
-                optimizeImageUrl(currentHero.poster, 'poster') ||
+                (typeof window !== 'undefined' && window.innerWidth < 640
+                  ? optimizeImageUrl(currentHero.poster, 'poster') || optimizeImageUrl(currentHero.background, 'background')
+                  : optimizeImageUrl(currentHero.background, 'background') || optimizeImageUrl(currentHero.poster, 'poster')) ||
                 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1920&q=85'
               }
               alt={currentHero.name}
               className="w-full h-full object-cover object-center filter brightness-100 contrast-110 saturate-140 transition-all duration-1000 ease-out"
             />
             
+            {/* Top black gradient diffusion */}
+            <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black via-black/70 to-transparent pointer-events-none z-10" />
+
             {/* Multilayer Dark Gradients for Liquid Transparency & AMOLED Seamless Fade */}
             <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
             <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/40 to-transparent sm:w-3/4" />
@@ -582,7 +891,7 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
           </div>
 
           {/* Hero Main Content Row */}
-          <div className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-8">
+          <div className="relative z-10 w-full px-4 sm:px-8 md:px-12 lg:px-16">
             <div className="max-w-2xl sm:max-w-3xl space-y-3.5">
               {/* Tipo Badge in alto */}
               <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -602,793 +911,431 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
                 </span>
               </div>
 
-              {/* Title / Poster Logo: Transparent PNG logo or Movie Poster Typography */}
-              {currentHero.logo ? (
-                <div className="py-1">
-                  <img
-                    src={currentHero.logo}
-                    alt={currentHero.name}
-                    className="h-16 sm:h-24 md:h-32 max-w-[85vw] sm:max-w-xl object-contain object-left drop-shadow-[0_10px_25px_rgba(0,0,0,0.95)]"
-                  />
+              {/* Title / Poster Logo & Content block (shifted further lower on mobile portrait) */}
+              <div className="pt-14 sm:pt-0 space-y-3 sm:space-y-3.5">
+                {currentHero.logo ? (
+                  <div className="py-1">
+                    <img
+                      src={currentHero.logo}
+                      alt={currentHero.name}
+                      className="h-16 sm:h-24 md:h-32 max-w-[85vw] sm:max-w-xl object-contain object-left drop-shadow-[0_10px_25px_rgba(0,0,0,0.95)]"
+                    />
+                  </div>
+                ) : (
+                  <h1 className="font-poster-logo text-3xl sm:text-6xl md:text-7xl font-black tracking-tighter drop-shadow-[0_8px_30px_rgba(0,0,0,0.95)] uppercase leading-none">
+                    {currentHero.name}
+                  </h1>
+                )}
+
+                {/* Valutazione, Anno, Categoria */}
+                <div className="flex items-center gap-2.5 flex-wrap text-xs pt-0.5">
+                  {/* Valutazione */}
+                  {currentHero.imdbRating && (
+                    <span className="flex items-center gap-1 text-[11px] text-amber-300 bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/35 font-bold shadow-md">
+                      <Star className="w-3 h-3 fill-amber-400" />
+                      <span>{currentHero.imdbRating}</span>
+                    </span>
+                  )}
+
+                  {/* Anno */}
+                  {currentHero.releaseInfo && (
+                    <span className="text-[11px] font-semibold text-slate-200 liquid-glass-transparent px-3 py-1 rounded-full border border-white/25 shadow-md">
+                      {getReleaseYear(currentHero.releaseInfo)}
+                    </span>
+                  )}
+
+                  {/* Categoria / Genere */}
+                  {currentHero.genres && currentHero.genres.length > 0 && (
+                    <span className="text-[11px] font-medium text-slate-300 liquid-glass-transparent px-3 py-1 rounded-full border border-white/20 shadow-md">
+                      {currentHero.genres.slice(0, 3).join(' • ')}
+                    </span>
+                  )}
                 </div>
-              ) : (
-                <h1 className="font-poster-logo text-4xl sm:text-6xl md:text-7xl font-black tracking-tighter drop-shadow-[0_8px_30px_rgba(0,0,0,0.95)] uppercase leading-none">
-                  {currentHero.name}
-                </h1>
-              )}
 
-              {/* Valutazione, Anno e Categoria sotto il nome */}
-              <div className="flex items-center gap-2 flex-wrap text-xs pt-0.5">
-                {/* Valutazione */}
-                {currentHero.imdbRating && (
-                  <span className="flex items-center gap-1 text-[11px] text-amber-300 bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/35 font-bold shadow-md">
-                    <Star className="w-3 h-3 fill-amber-400" />
-                    <span>{currentHero.imdbRating}</span>
-                  </span>
+                {currentHero.description && (
+                  <p className="text-xs sm:text-base text-slate-200/90 line-clamp-2 sm:line-clamp-3 leading-relaxed max-w-2xl font-normal drop-shadow-md">
+                    {currentHero.description}
+                  </p>
                 )}
 
-                {/* Anno */}
-                {currentHero.releaseInfo && (
-                  <span className="text-[11px] font-semibold text-slate-200 liquid-glass-transparent px-3 py-1 rounded-full border border-white/25 shadow-md">
-                    {getReleaseYear(currentHero.releaseInfo)}
-                  </span>
-                )}
+                {/* Action Buttons: Episodi / Guarda Ora, Aggiungi alla Libreria, Scheda & Trama (All Horizontal) */}
+                <div className="flex items-center gap-2 sm:gap-3.5 pt-1.5 flex-nowrap sm:flex-wrap overflow-x-auto scrollbar-none pb-1 pr-36 landscape:pr-48 sm:pr-0 max-w-full">
+                  {currentHero.type === 'series' ? (
+                    <button
+                      onClick={() => onSelectMedia(currentHero)}
+                      className="flex items-center gap-2 px-6 sm:px-8 py-3 sm:py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-xs sm:text-sm tracking-wide transition-all duration-200 shadow-xl active:scale-95 cursor-pointer whitespace-nowrap flex-shrink-0"
+                    >
+                      <Tv className="w-4 h-4 text-white" />
+                      <span>Episodi</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleHeroPlay}
+                      className="flex items-center gap-2 px-6 sm:px-8 py-3 sm:py-3.5 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-xs sm:text-sm tracking-wide transition-all duration-200 shadow-xl active:scale-95 cursor-pointer whitespace-nowrap flex-shrink-0"
+                    >
+                      <Play className="w-4 h-4 fill-current ml-0.5" />
+                      <span>Guarda Ora</span>
+                    </button>
+                  )}
 
-                {/* Categoria / Genere */}
-                {currentHero.genres && currentHero.genres.length > 0 && (
-                  <span className="text-[11px] font-medium text-slate-300 liquid-glass-transparent px-3 py-1 rounded-full border border-white/20 shadow-md">
-                    {currentHero.genres.slice(0, 3).join(' • ')}
-                  </span>
-                )}
-              </div>
+                  <button
+                    onClick={handleHeroLibraryToggle}
+                    className={`flex items-center gap-2 px-3.5 sm:px-5 py-3 sm:py-3.5 rounded-2xl font-bold text-xs sm:text-sm transition-all duration-200 cursor-pointer shadow-lg active:scale-95 whitespace-nowrap flex-shrink-0 ${
+                      heroInLibrary
+                        ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 shadow-emerald-500/20'
+                        : 'liquid-glass-transparent hover:bg-white/20 text-white border border-white/25'
+                    }`}
+                    title={heroInLibrary ? 'Rimuovi dalla Libreria' : 'Aggiungi alla Libreria'}
+                  >
+                    {heroInLibrary ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                    <span className="hidden landscape:inline sm:inline">
+                      {heroInLibrary ? 'In Libreria' : 'Aggiungi alla Libreria'}
+                    </span>
+                  </button>
 
-              {currentHero.description && (
-                <p className="text-sm sm:text-base text-slate-200/90 line-clamp-3 leading-relaxed max-w-2xl font-normal drop-shadow-md">
-                  {currentHero.description}
-                </p>
-              )}
-
-              {/* Action Buttons: Episodi / Guarda Ora, Aggiungi alla Libreria, Scheda & Trama */}
-              <div className="flex items-center gap-3.5 pt-2 flex-wrap">
-                {currentHero.type === 'series' ? (
                   <button
                     onClick={() => onSelectMedia(currentHero)}
-                    className="flex items-center gap-2.5 px-8 py-3.5 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide transition-all duration-200 shadow-xl shadow-red-600/40 hover:shadow-red-500/60 active:scale-95 cursor-pointer"
+                    className="flex items-center gap-2 px-3.5 sm:px-5 py-3 sm:py-3.5 rounded-2xl liquid-glass-transparent hover:bg-white/20 text-slate-200 hover:text-white font-semibold text-xs sm:text-sm transition-all duration-200 active:scale-95 cursor-pointer border border-white/25 shadow-lg whitespace-nowrap flex-shrink-0"
+                    title="Scheda & Trama"
                   >
-                    <Tv className="w-4 h-4 text-white" />
-                    <span>Episodi</span>
+                    <Info className="w-4 h-4 text-rose-300" />
+                    <span className="hidden landscape:inline sm:inline">Scheda & Trama</span>
                   </button>
-                ) : (
-                  <button
-                    onClick={handleHeroPlay}
-                    className="flex items-center gap-2.5 px-8 py-3.5 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide transition-all duration-200 shadow-xl shadow-red-600/40 hover:shadow-red-500/60 active:scale-95 cursor-pointer"
-                  >
-                    <Play className="w-4 h-4 fill-current ml-0.5" />
-                    <span>Guarda Ora</span>
-                  </button>
-                )}
-
-                <button
-                  onClick={handleHeroLibraryToggle}
-                  className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs sm:text-sm transition-all duration-200 cursor-pointer shadow-lg active:scale-95 ${
-                    heroInLibrary
-                      ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 shadow-emerald-500/20'
-                      : 'liquid-glass-transparent hover:bg-white/20 text-white border border-white/25'
-                  }`}
-                  title={heroInLibrary ? 'Rimuovi dalla Libreria' : 'Aggiungi alla Libreria'}
-                >
-                  {heroInLibrary ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                  <span>{heroInLibrary ? 'In Libreria' : 'Aggiungi alla Libreria'}</span>
-                </button>
-
-                <button
-                  onClick={() => onSelectMedia(currentHero)}
-                  className="flex items-center gap-2 px-5 py-3.5 rounded-2xl liquid-glass-transparent hover:bg-white/20 text-slate-200 hover:text-white font-semibold text-xs sm:text-sm transition-all duration-200 active:scale-95 cursor-pointer border border-white/25 shadow-lg"
-                >
-                  <Info className="w-4 h-4 text-rose-300" />
-                  <span>Scheda & Trama</span>
-                </button>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Integrated Liquid Glass Carousel Controller Pill (Arrows + Time Progress Indicator) */}
+          {/* Carousel Controller Pill: Positioned cleanly inside banner without translate overflow clipping */}
           {featuredList.length > 1 && (
-            <div className="absolute bottom-2.5 sm:bottom-3 right-4 sm:right-8 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full liquid-glass-transparent border border-white/25 shadow-2xl">
-              <button
-                type="button"
-                onClick={handlePrevHero}
-                className="w-8 h-8 rounded-full text-white/90 hover:text-white hover:bg-white/20 flex items-center justify-center transition-all cursor-pointer hover:scale-105 active:scale-95"
-                title="Titolo precedente"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-
-              <div className="flex items-center gap-1.5 px-1.5">
-                {featuredList.map((item, idx) => {
-                  const isCurrent = idx === featuredIndex;
-                  return (
-                    <button
-                      key={`${item.id}-${idx}`}
-                      onClick={() => handleSelectHeroSlide(idx)}
-                      className={`relative h-2 rounded-full transition-all duration-300 cursor-pointer overflow-hidden ${
-                        isCurrent
-                          ? 'w-10 sm:w-12 bg-white/20'
-                          : 'w-2 bg-white/30 hover:bg-white/60'
-                      }`}
-                      title={`Slide ${idx + 1}`}
-                    >
-                      {isCurrent && (
-                        <div
-                          className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-600 via-rose-500 to-red-500 rounded-full transition-all duration-75 ease-linear shadow-[0_0_8px_rgba(225,29,72,0.8)]"
-                          style={{ width: `${heroProgress}%` }}
-                        />
-                      )}
-                    </button>
-                  );
-                })}
+            <div className="absolute bottom-3 sm:bottom-5 right-3 sm:right-8 z-20 pointer-events-auto">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full liquid-glass-transparent border border-white/30 shadow-2xl backdrop-blur-xl">
+                <button
+                  type="button"
+                  onClick={handlePrevHero}
+                  className="w-7 h-7 rounded-full text-white/90 hover:text-white hover:bg-white/20 flex items-center justify-center transition-all cursor-pointer active:scale-95"
+                  title="Precedente"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <div className="flex items-center gap-1.5 px-1">
+                  {featuredList.map((item, idx) => {
+                    const isCurrent = idx === featuredIndex;
+                    return (
+                      <button
+                        key={`${item.id}-${idx}`}
+                        onClick={() => handleSelectHeroSlide(idx)}
+                        className={`relative h-1.5 sm:h-2 rounded-full transition-all duration-300 cursor-pointer overflow-hidden ${
+                          isCurrent ? 'w-6 sm:w-10 bg-white/30' : 'w-1.5 sm:w-2 bg-white/30 hover:bg-white/60'
+                        }`}
+                        title={`Slide ${idx + 1}`}
+                      >
+                        {isCurrent && (
+                          <div
+                            key={`hero-bar-${featuredIndex}`}
+                            className={`absolute inset-y-0 left-0 bg-gradient-to-r from-red-600 via-rose-500 to-red-500 rounded-full shadow-[0_0_8px_rgba(225,29,72,0.8)] ${
+                              isHeroHovered ? 'w-full' : 'animate-hero-progress'
+                            }`}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleNextHero}
+                  className="w-7 h-7 rounded-full text-white/90 hover:text-white hover:bg-white/20 flex items-center justify-center transition-all cursor-pointer active:scale-95"
+                  title="Successivo"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
               </div>
-
-              <button
-                type="button"
-                onClick={handleNextHero}
-                className="w-8 h-8 rounded-full text-white/90 hover:text-white hover:bg-white/20 flex items-center justify-center transition-all cursor-pointer hover:scale-105 active:scale-95"
-                title="Titolo successivo"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
             </div>
           )}
         </div>
       )}
 
       {/* AMOLED Black transition spacer */}
-      <div className="h-2" />
-
-      {/* Categories Bar for Movies */}
-      {tab === 'movies' && (
-        <div className="max-w-7xl mx-auto px-4 sm:px-8">
-          <div className="flex items-center justify-between gap-4 mb-2">
-            <div>
-              <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-                <Film className="w-5 h-5 text-rose-400" />
-                <span>Cinema & Film</span>
-              </h2>
-              <p className="text-xs text-slate-400">
-                Esplora per categorie, prime visioni e grandi successi internazionali
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
-            {MOVIE_GENRES.map((g) => (
-              <button
-                key={g}
-                onClick={() => setSelectedMovieGenre(g)}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  selectedMovieGenre === g
-                    ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-md shadow-red-600/40 border border-rose-400/40 font-bold'
-                    : 'liquid-glass-transparent text-slate-300 hover:text-white border-white/20'
-                }`}
-              >
-                {g}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Categories Bar for Series */}
-      {tab === 'series' && (
-        <div className="max-w-7xl mx-auto px-4 sm:px-8">
-          <div className="flex items-center justify-between gap-4 mb-2">
-            <div>
-              <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-                <Tv className="w-5 h-5 text-purple-400" />
-                <span>Serie TV & Show</span>
-              </h2>
-              <p className="text-xs text-slate-400">
-                Tutte le stagioni, serie di tendenza e uscite divise per genere
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
-            {SERIES_GENRES.map((g) => (
-              <button
-                key={g}
-                onClick={() => setSelectedSeriesGenre(g)}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  selectedSeriesGenre === g
-                    ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-md shadow-purple-600/40 border border-purple-400/40 font-bold'
-                    : 'liquid-glass-transparent text-slate-300 hover:text-white border-white/20'
-                }`}
-              >
-                {g}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="h-2 max-sm:h-6 max-sm:landscape:h-8" />
 
       {/* MAIN CATALOG CONTENT */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 space-y-10">
+      <div className="w-full px-4 sm:px-8 md:px-12 lg:px-16 space-y-10">
         {/* ==================== TAB 1: SCOPRI (DISCOVER) ==================== */}
         {tab === 'discover' && (
           <>
-            {/* ================= LIQUID GLASS PROVIDER SELECTOR PILL ================= */}
-            <div className="pt-1">
-              <ProviderSelector
-                selectedProvider={selectedProvider}
-                onSelectProvider={handleSelectProvider}
-                title="Classifiche Top 10 Ufficiali per Provider"
-                subtitle="Seleziona un logo per visualizzare la classifica dei 10 titoli più visti di oggi in Italia o nel mondo"
-              />
-            </div>
-
-            {/* Top 10 Film del Provider Selezionato */}
-            <CatalogRow
-              key={`provider-movies-${selectedProvider}`}
-              title={`Top 10 ${currentProviderConfig.shortName} - Film`}
-              subtitle={currentProviderConfig.movieSubtitle}
+            {/* Top 10 Film - Monumentale Netflix Style con Selettore Provider a Destra */}
+            <Top10Row
+              key={`discover-top10-movies-${selectedMovieProvider}`}
+              type="movie"
               items={providerTop10Movies}
-              badge={`Top 10 ${currentProviderConfig.shortName}`}
-              showRank
+              selectedProvider={selectedMovieProvider}
+              onSelectProvider={handleSelectMovieProvider}
               loading={providerLoading && providerTop10Movies.length === 0}
-              onSelect={onSelectMedia}
+              onSelectMedia={onSelectMedia}
               onQuickPlay={handleCardQuickPlay}
             />
 
-            {/* Top 10 Serie TV del Provider Selezionato */}
-            <CatalogRow
-              key={`provider-series-${selectedProvider}`}
-              title={`Top 10 ${currentProviderConfig.shortName} - Serie TV`}
-              subtitle={currentProviderConfig.seriesSubtitle}
+            {/* Top 10 Serie TV - Monumentale Netflix Style con Selettore Provider a Destra */}
+            <Top10Row
+              key={`discover-top10-series-${selectedSeriesProvider}`}
+              type="series"
               items={providerTop10Series}
-              badge={`Top 10 ${currentProviderConfig.shortName}`}
-              showRank
+              selectedProvider={selectedSeriesProvider}
+              onSelectProvider={handleSelectSeriesProvider}
               loading={providerLoading && providerTop10Series.length === 0}
-              onSelect={onSelectMedia}
+              onSelectMedia={onSelectMedia}
               onQuickPlay={handleCardQuickPlay}
             />
 
-            {/* Al Cinema & Prime Visioni */}
-            <CatalogRow
-              title="Prime Visioni al Cinema"
-              subtitle="I film attualmente in programmazione nelle sale cinematografiche"
-              items={nowPlaying}
-              badge="Al Cinema"
-              loading={loading}
-              onSelect={onSelectMedia}
-              onQuickPlay={handleCardQuickPlay}
-            />
-
-            {/* Film di Tendenza */}
-            <CatalogRow
-              title="Film di Tendenza"
-              subtitle="I titoli con la crescita più rapida nelle preferenze del pubblico"
-              items={trendingMovies}
-              loading={loading}
-              onSelect={onSelectMedia}
-              onQuickPlay={handleCardQuickPlay}
-            />
-
-            {/* Serie TV di Tendenza */}
-            <CatalogRow
-              title="Serie TV di Tendenza"
-              subtitle="Nuovi episodi e uscite imperdibili sul piccolo schermo"
-              items={trendingSeries}
-              loading={loading}
-              onSelect={onSelectMedia}
-              onQuickPlay={handleCardQuickPlay}
-            />
-
-            {/* I Più Votati di Sempre */}
-            <CatalogRow
-              title="I Più Votati di Sempre"
-              subtitle="Capolavori universali acclamati da pubblico e critica cinematografica"
-              items={topRatedMovies}
-              badge="Top Rating"
-              loading={loading}
-              onSelect={onSelectMedia}
-              onQuickPlay={handleCardQuickPlay}
-            />
-
-            {/* Piattaforme in evidenza */}
-            {netflixMovies.length > 0 && (
-              <CatalogRow
-                title="Produzioni Originali Netflix"
-                subtitle="Film e progetti esclusivi del catalogo Netflix"
-                items={netflixMovies}
-                badge="Netflix"
-                loading={loading}
-                onSelect={onSelectMedia}
-                onQuickPlay={handleCardQuickPlay}
-              />
-            )}
-
-            {primeMovies.length > 0 && (
-              <CatalogRow
-                title="Amazon Prime Video"
-                subtitle="I migliori titoli disponibili su Amazon Prime"
-                items={primeMovies}
-                badge="Prime Video"
-                loading={loading}
-                onSelect={onSelectMedia}
-                onQuickPlay={handleCardQuickPlay}
-              />
-            )}
-
-            {disneyMovies.length > 0 && (
-              <CatalogRow
-                title="Disney+ & Marvel"
-                subtitle="Animazione per tutta la famiglia, Pixar e saghe Marvel"
-                items={disneyMovies}
-                badge="Disney+"
-                loading={loading}
-                onSelect={onSelectMedia}
-                onQuickPlay={handleCardQuickPlay}
-              />
+            {/* ================= CATEGORIE ESSENZIALI CURATE E BILANCIATE (50% FILM, 50% SERIE TV, ZERO DUPLICATI) ================= */}
+            {categoriesLoading && discoverCategories.length === 0 ? (
+              <div className="py-12 flex flex-col items-center justify-center gap-3 text-slate-400">
+                <Loader2 className="w-7 h-7 text-cyan-400 animate-spin" />
+                <p className="text-sm font-medium">Caricamento catalogo in corso...</p>
+              </div>
+            ) : (
+              discoverCategories.map((cat) => (
+                <CatalogRow
+                  key={cat.id}
+                  title={cat.title}
+                  items={cat.items}
+                  tab="discover"
+                  loading={categoriesLoading && cat.items.length === 0}
+                  onSelect={onSelectMedia}
+                  onQuickPlay={handleCardQuickPlay}
+                />
+              ))
             )}
           </>
         )}
 
         {/* ==================== TAB 2: FILM (MOVIES) ==================== */}
         {tab === 'movies' && (
-          <>
-            {/* Se è selezionata una categoria specifica: visualizzazione Griglia per quel genere */}
-            {selectedMovieGenre !== 'Tutti i Film' ? (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                    <Clapperboard className="w-5 h-5 text-cyan-400" />
-                    <span>Categoria: {selectedMovieGenre}</span>
-                  </h3>
-                  <button
-                    onClick={() => setSelectedMovieGenre('Tutti i Film')}
-                    className="text-xs text-cyan-400 hover:text-cyan-300 font-medium cursor-pointer"
-                  >
-                    Torna a Tutti i Film &rarr;
-                  </button>
-                </div>
+          <div className="space-y-6">
+            {/* 1. Top 10 Film - Posizionato in cima, non si smonta mai */}
+            <Top10Row
+              key={`tab-movies-top10-${selectedMovieProvider}`}
+              type="movie"
+              items={providerTop10Movies}
+              selectedProvider={selectedMovieProvider}
+              onSelectProvider={handleSelectMovieProvider}
+              loading={providerLoading && providerTop10Movies.length === 0}
+              onSelectMedia={onSelectMedia}
+              onQuickPlay={handleCardQuickPlay}
+            />
 
-                {genreGridLoading ? (
-                  <div className="flex flex-col items-center justify-center py-20 gap-3">
-                    <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
-                    <span className="text-xs text-slate-400">Caricamento titoli {selectedMovieGenre}...</span>
-                  </div>
-                ) : genreGridItems.length === 0 ? (
-                  <div className="p-12 rounded-3xl liquid-glass text-center text-slate-400">
-                    <p className="text-sm">Nessun film trovato per la categoria {selectedMovieGenre}.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-5 pt-3.5 pb-4">
-                    {genreGridItems.map((item, idx) => (
-                      <MediaCard
-                        key={`${item.id}-${idx}`}
-                        item={item}
-                        onSelect={onSelectMedia}
-                        onQuickPlay={handleCardQuickPlay}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
+            {/* 2. Generi / Categorie - Sempre sotto la Top 10, immobile nella stessa posizione */}
+            <div className="my-6">
+              <CategoryCarouselBar
+                type="movie"
+                genres={MOVIE_GENRE_DEFINITIONS}
+                selectedGenreName={selectedMovieGenre}
+                onSelectGenre={setSelectedMovieGenre}
+              />
+            </div>
+
+            {/* 3. Contenuto sotto la barra generi: Dettaglio del genere o tutte le categorie */}
+            {selectedMovieGenre !== 'Tutti' ? (
+              (() => {
+                const currentGenreDef =
+                  MOVIE_GENRE_DEFINITIONS.find((g) => g.name === selectedMovieGenre) ||
+                  MOVIE_GENRE_DEFINITIONS[1];
+                return (
+                  <CategoryDetailView
+                    key={`movie-genre-${selectedMovieGenre}`}
+                    type="movie"
+                    genreDef={currentGenreDef}
+                    items={genreGridItems}
+                    loading={genreGridLoading}
+                    onSelectMedia={onSelectMedia}
+                    onPlayStream={onPlayStream}
+                    onBackToAll={() => setSelectedMovieGenre('Tutti')}
+                  />
+                );
+              })()
             ) : (
-              /* Sezione Tutti i Film con tutte le categorie ricche */
-              <>
-                {/* 1. Provider Selector & Top Movie */}
-                <div className="pt-1">
-                  <ProviderSelector
-                    selectedProvider={selectedProvider}
-                    onSelectProvider={handleSelectProvider}
-                    title="Classifiche Top 10 Film per Piattaforma"
-                    subtitle="Seleziona un logo per visualizzare i 10 film più visti del momento sul provider scelto"
-                  />
+              categoriesLoading && movieCategories.length === 0 ? (
+                <div className="py-12 flex flex-col items-center justify-center gap-3 text-slate-400">
+                  <Loader2 className="w-7 h-7 text-amber-400 animate-spin" />
+                  <p className="text-sm font-medium">Caricamento catalogo film in corso...</p>
                 </div>
-
-                <CatalogRow
-                  key={`tab-movies-provider-${selectedProvider}`}
-                  title={`Top 10 ${currentProviderConfig.shortName} - Film`}
-                  subtitle={currentProviderConfig.movieSubtitle}
-                  items={providerTop10Movies}
-                  badge={`Top 10 ${currentProviderConfig.shortName}`}
-                  showRank
-                  loading={providerLoading && providerTop10Movies.length === 0}
-                  onSelect={onSelectMedia}
-                  onQuickPlay={handleCardQuickPlay}
-                />
-
-                {/* 2. Al Cinema */}
-                <CatalogRow
-                  title="Al Cinema & Prime Visioni"
-                  subtitle="I titoli attualmente nelle sale e appena usciti"
-                  items={nowPlaying}
-                  badge="Al Cinema"
-                  loading={loading}
-                  onSelect={onSelectMedia}
-                  onQuickPlay={handleCardQuickPlay}
-                />
-
-                {/* 3. Film di Tendenza */}
-                <CatalogRow
-                  title="Film di Tendenza"
-                  subtitle="Cosa stanno guardando gli appassionati di cinema in questo momento"
-                  items={trendingMovies}
-                  loading={loading}
-                  onSelect={onSelectMedia}
-                  onQuickPlay={handleCardQuickPlay}
-                />
-
-                {/* 4. Film Popolari */}
-                <CatalogRow
-                  title="Film Popolari & Più Visti"
-                  subtitle="I successi planetari più amati di sempre"
-                  items={popularMovies}
-                  loading={loading}
-                  onSelect={onSelectMedia}
-                  onQuickPlay={handleCardQuickPlay}
-                />
-
-                {/* 5. Film Più Votati */}
-                <CatalogRow
-                  title="Film Più Votati (Migliori di Sempre)"
-                  subtitle="I film con le valutazioni IMDb e della critica più alte"
-                  items={topRatedMovies}
-                  badge="Capolavori"
-                  loading={loading}
-                  onSelect={onSelectMedia}
-                  onQuickPlay={handleCardQuickPlay}
-                />
-
-                {/* 6. Categoria: Commedie */}
-                {comedyMovies.length > 0 && (
+              ) : (
+                movieCategories.map((cat) => (
                   <CatalogRow
-                    title="Commedie da non Perdere"
-                    subtitle="Risate, divertimento e commedie brillanti per ogni serata"
-                    items={comedyMovies}
-                    badge="Commedia"
-                    loading={loading}
+                    key={cat.id}
+                    title={cat.title}
+                    items={cat.items}
+                    tab="movies"
+                    loading={categoriesLoading && cat.items.length === 0}
                     onSelect={onSelectMedia}
                     onQuickPlay={handleCardQuickPlay}
                   />
-                )}
-
-                {/* 7. Categoria: Azione */}
-                {actionMovies.length > 0 && (
-                  <CatalogRow
-                    title="Azione & Avventura ad Alto Tasso d'Adrenalina"
-                    subtitle="Inseguimenti, combattimenti e saghe d'azione mozzafiato"
-                    items={actionMovies}
-                    badge="Azione"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 8. Categoria: Animazione */}
-                {animationMovies.length > 0 && (
-                  <CatalogRow
-                    title="Animazione & Cinema per Famiglie"
-                    subtitle="Capolavori d'animazione digitale, classici e storie emozionanti"
-                    items={animationMovies}
-                    badge="Animazione"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 9. Categoria: Horror */}
-                {horrorMovies.length > 0 && (
-                  <CatalogRow
-                    title="Brividi & Horror"
-                    subtitle="Tensione psicologica, creature misteriose e notti di terrore"
-                    items={horrorMovies}
-                    badge="Horror"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 10. Categoria: Fantascienza */}
-                {sciFiMovies.length > 0 && (
-                  <CatalogRow
-                    title="Fantascienza & Viaggi nel Tempo"
-                    subtitle="Futuri distopici, intelligenza artificiale ed esplorazioni spaziali"
-                    items={sciFiMovies}
-                    badge="Sci-Fi"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 11. Categoria: Thriller */}
-                {thrillerMovies.length > 0 && (
-                  <CatalogRow
-                    title="Thriller & Mistero ad Alta Suspense"
-                    subtitle="Trame intricate, colpi di scena e indagini psicologiche"
-                    items={thrillerMovies}
-                    badge="Thriller"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 12. Categoria: Drammatici */}
-                {dramaMovies.length > 0 && (
-                  <CatalogRow
-                    title="Grandi Drammi & Storie Vere"
-                    subtitle="Film d'autore intensi, biografie e racconti commoventi"
-                    items={dramaMovies}
-                    badge="Dramma"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-              </>
+                ))
+              )
             )}
-          </>
+          </div>
         )}
 
         {/* ==================== TAB 3: SERIE TV (SERIES) ==================== */}
         {tab === 'series' && (
-          <>
-            {/* Se è selezionata una categoria specifica: visualizzazione Griglia per quel genere */}
-            {selectedSeriesGenre !== 'Tutte le Serie' ? (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                    <Tv className="w-5 h-5 text-cyan-400" />
-                    <span>Categoria Serie TV: {selectedSeriesGenre}</span>
-                  </h3>
-                  <button
-                    onClick={() => setSelectedSeriesGenre('Tutte le Serie')}
-                    className="text-xs text-cyan-400 hover:text-cyan-300 font-medium cursor-pointer"
-                  >
-                    Torna a Tutte le Serie &rarr;
-                  </button>
+          <div className="space-y-6">
+            {/* ================= BOTTONI SELEZIONE TRA SERIE TV E LIVE TV (SOTTO IL PRIMO CAROSELLO HERO, SOPRA LA TOP 10) ================= */}
+            <div className="flex justify-center items-center -mt-3 mb-2 sm:-mt-4 sm:mb-4 z-10 relative">
+              <div className="flex items-center gap-2 p-1.5 rounded-2xl border border-white/25 shadow-xl bg-black/85 backdrop-blur-2xl">
+                <button
+                  type="button"
+                  onClick={() => setSeriesSubView('series')}
+                  className={`flex items-center justify-center gap-2 px-6 py-2.5 sm:px-7 sm:py-3 rounded-xl font-bold text-xs sm:text-sm tracking-wide transition-all duration-200 cursor-pointer ${
+                    seriesSubView === 'series'
+                      ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-purple-600/40 scale-[1.02]'
+                      : 'text-slate-300 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  <Tv className="w-4 h-4 text-purple-300" />
+                  <span>Serie TV</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSeriesSubView('livetv')}
+                  className={`flex items-center justify-center gap-2 px-6 py-2.5 sm:px-7 sm:py-3 rounded-xl font-bold text-xs sm:text-sm tracking-wide transition-all duration-200 cursor-pointer ${
+                    seriesSubView === 'livetv'
+                      ? 'bg-gradient-to-r from-red-600 via-rose-600 to-pink-600 text-white shadow-lg shadow-rose-600/40 scale-[1.02]'
+                      : 'text-slate-300 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  <Radio className="w-4 h-4 text-rose-400 animate-pulse" />
+                  <span>Canali TV</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Mostra o il Catalogo Serie TV o i Canali Live TV a seconda della scelta */}
+            {seriesSubView === 'livetv' ? (
+              <LiveTvBrowser
+                searchQuery={searchQuery}
+                onPlayLiveChannel={(ch) => onPlayLiveChannel?.(ch)}
+              />
+            ) : (
+              <>
+                {/* 1. Top 10 Serie - Posizionato SOTTO il selettore Serie TV / Live TV, non si smonta mai */}
+                <Top10Row
+                  key={`tab-series-top10-${selectedSeriesProvider}`}
+                  type="series"
+                  items={providerTop10Series}
+                  selectedProvider={selectedSeriesProvider}
+                  onSelectProvider={handleSelectSeriesProvider}
+                  loading={providerLoading && providerTop10Series.length === 0}
+                  onSelectMedia={onSelectMedia}
+                  onQuickPlay={handleCardQuickPlay}
+                />
+
+                {/* 2. Generi / Categorie - Sempre sotto la Top 10, immobile nella stessa posizione */}
+                <div className="my-6">
+                  <CategoryCarouselBar
+                    type="series"
+                    genres={SERIES_GENRE_DEFINITIONS}
+                    selectedGenreName={selectedSeriesGenre}
+                    onSelectGenre={setSelectedSeriesGenre}
+                  />
                 </div>
 
-                {genreGridLoading ? (
-                  <div className="flex flex-col items-center justify-center py-20 gap-3">
-                    <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
-                    <span className="text-xs text-slate-400">Caricamento serie {selectedSeriesGenre}...</span>
-                  </div>
-                ) : genreGridItems.length === 0 ? (
-                  <div className="p-12 rounded-3xl liquid-glass text-center text-slate-400">
-                    <p className="text-sm">Nessuna serie trovata per la categoria {selectedSeriesGenre}.</p>
-                  </div>
+                {/* 3. Contenuto sotto la barra generi: Dettaglio del genere o tutte le categorie */}
+                {selectedSeriesGenre !== 'Tutti' ? (
+                  (() => {
+                    const currentGenreDef =
+                      SERIES_GENRE_DEFINITIONS.find((g) => g.name === selectedSeriesGenre) ||
+                      SERIES_GENRE_DEFINITIONS[1];
+                    return (
+                      <CategoryDetailView
+                        key={`series-genre-${selectedSeriesGenre}`}
+                        type="series"
+                        genreDef={currentGenreDef}
+                        items={genreGridItems}
+                        loading={genreGridLoading}
+                        onSelectMedia={onSelectMedia}
+                        onPlayStream={onPlayStream}
+                        onBackToAll={() => setSelectedSeriesGenre('Tutti')}
+                      />
+                    );
+                  })()
                 ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-5 pt-3.5 pb-4">
-                    {genreGridItems.map((item, idx) => (
-                      <MediaCard
-                        key={`${item.id}-${idx}`}
-                        item={item}
+                  categoriesLoading && seriesCategories.length === 0 ? (
+                    <div className="py-12 flex flex-col items-center justify-center gap-3 text-slate-400">
+                      <Loader2 className="w-7 h-7 text-cyan-400 animate-spin" />
+                      <p className="text-sm font-medium">Caricamento catalogo serie TV in corso...</p>
+                    </div>
+                  ) : (
+                    seriesCategories.map((cat) => (
+                      <CatalogRow
+                        key={cat.id}
+                        title={cat.title}
+                        items={cat.items}
+                        tab="series"
+                        loading={categoriesLoading && cat.items.length === 0}
                         onSelect={onSelectMedia}
                         onQuickPlay={handleCardQuickPlay}
                       />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* Sezione Tutte le Serie TV con categorie dettagliate */
-              <>
-                {/* 1. Provider Selector & Top Series */}
-                <div className="pt-1">
-                  <ProviderSelector
-                    selectedProvider={selectedProvider}
-                    onSelectProvider={handleSelectProvider}
-                    title="Classifiche Top 10 Serie TV per Piattaforma"
-                    subtitle="Seleziona un logo per visualizzare le 10 serie TV più viste del momento sul provider scelto"
-                  />
-                </div>
-
-                <CatalogRow
-                  key={`tab-series-provider-${selectedProvider}`}
-                  title={`Top 10 ${currentProviderConfig.shortName} - Serie TV`}
-                  subtitle={currentProviderConfig.seriesSubtitle}
-                  items={providerTop10Series}
-                  badge={`Top 10 ${currentProviderConfig.shortName}`}
-                  showRank
-                  loading={providerLoading && providerTop10Series.length === 0}
-                  onSelect={onSelectMedia}
-                  onQuickPlay={handleCardQuickPlay}
-                />
-
-                {/* 2. Serie TV di Tendenza */}
-                <CatalogRow
-                  title="Serie TV di Tendenza"
-                  subtitle="Le uscite e i nuovi episodi più chiacchierati sul web"
-                  items={trendingSeries}
-                  loading={loading}
-                  onSelect={onSelectMedia}
-                  onQuickPlay={handleCardQuickPlay}
-                />
-
-                {/* 3. Serie TV Popolari */}
-                <CatalogRow
-                  title="Serie TV Più Popolari"
-                  subtitle="I franchise e le serie cult con le community più vaste"
-                  items={popularSeries}
-                  loading={loading}
-                  onSelect={onSelectMedia}
-                  onQuickPlay={handleCardQuickPlay}
-                />
-
-                {/* 4. Serie TV Più Votate */}
-                <CatalogRow
-                  title="Serie TV Acclamate dalla Critica"
-                  subtitle="Le produzioni con i punteggi e i voti più alti"
-                  items={topRatedSeries}
-                  badge="Top Rated"
-                  loading={loading}
-                  onSelect={onSelectMedia}
-                  onQuickPlay={handleCardQuickPlay}
-                />
-
-                {/* 5. Categoria: Crime & Poliziesco */}
-                {crimeSeries.length > 0 && (
-                  <CatalogRow
-                    title="Crime, Indagini & Misteri"
-                    subtitle="Detective, indagini forensi, mafia e serie crime ad alto impatto"
-                    items={crimeSeries}
-                    badge="Crime"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 6. Categoria: Commedie */}
-                {comedySeries.length > 0 && (
-                  <CatalogRow
-                    title="Commedie & Sitcom Esilaranti"
-                    subtitle="Episodi brillanti, risate e serie perfette per rilassarsi"
-                    items={comedySeries}
-                    badge="Commedia"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 7. Categoria: Azione & Avventura */}
-                {actionSeries.length > 0 && (
-                  <CatalogRow
-                    title="Azione, Supereroi & Avventura"
-                    subtitle="Grandi epopee, conflitti spettacolari e battaglie epiche"
-                    items={actionSeries}
-                    badge="Azione"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 8. Categoria: Fantascienza & Fantasy */}
-                {sciFiSeries.length > 0 && (
-                  <CatalogRow
-                    title="Fantascienza, Universi Paralleli & Fantasy"
-                    subtitle="Mondi immaginari, viaggi nello spazio ed elementi magici"
-                    items={sciFiSeries}
-                    badge="Sci-Fi & Fantasy"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 9. Categoria: Serie Drammatiche */}
-                {dramaSeries.length > 0 && (
-                  <CatalogRow
-                    title="Grandi Serie Drammatiche"
-                    subtitle="Intrighi politici, saghe familiari e relazioni complesse"
-                    items={dramaSeries}
-                    badge="Dramma"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 10. Categoria: Animazione & Anime */}
-                {animeSeries.length > 0 && (
-                  <CatalogRow
-                    title="Animazione & Serie Anime"
-                    subtitle="Serie animate giapponesi, animazione occidentale e produzioni d'autore"
-                    items={animeSeries}
-                    badge="Animazione"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 11. Categoria: Documentari */}
-                {docuSeries.length > 0 && (
-                  <CatalogRow
-                    title="Documentari & Docuserie"
-                    subtitle="Scienza, natura, cronaca reale e storie che cambiano la prospettiva"
-                    items={docuSeries}
-                    badge="Documentario"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 12. Netflix Serie */}
-                {netflixSeries.length > 0 && (
-                  <CatalogRow
-                    title="Originali Netflix - Serie TV"
-                    subtitle="Le serie TV create e distribuite da Netflix"
-                    items={netflixSeries}
-                    badge="Netflix"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
-                )}
-
-                {/* 13. Prime Video Serie */}
-                {primeSeries.length > 0 && (
-                  <CatalogRow
-                    title="Originali Amazon Prime Video"
-                    subtitle="Le grandi serie esclusive targate Amazon Studios"
-                    items={primeSeries}
-                    badge="Prime Video"
-                    loading={loading}
-                    onSelect={onSelectMedia}
-                    onQuickPlay={handleCardQuickPlay}
-                  />
+                    ))
+                  )
                 )}
               </>
             )}
-          </>
+          </div>
+        )}
+
+        {/* ==================== TAB 4: LIVE TV (CANALI ITALIANI DIRETTA) ==================== */}
+        {tab === 'livetv' && (
+          <LiveTvBrowser
+            searchQuery={searchQuery}
+            onPlayLiveChannel={(ch) => onPlayLiveChannel?.(ch)}
+          />
         )}
       </div>
     </div>
   );
 };
 
-// Reusable Horizontal Scrollable Catalog Row with optional Top 10 Rank Badge
+// Reusable Horizontal Scrollable Catalog Row (Optimized with React.memo & viewport contain)
 interface CatalogRowProps {
   title: string;
   subtitle?: string;
   items: StremioMetaPreview[];
   badge?: string;
-  showRank?: boolean;
   loading?: boolean;
+  tab?: string;
   onSelect: (item: StremioMetaPreview) => void;
   onQuickPlay: (item: StremioMetaPreview) => void;
 }
 
-const CatalogRow: React.FC<CatalogRowProps> = ({
+const CatalogRow: React.FC<CatalogRowProps> = React.memo(({
   title,
   subtitle,
   items,
   badge,
-  showRank,
   loading,
+  tab,
   onSelect,
   onQuickPlay,
 }) => {
   const rowRef = useRef<HTMLDivElement>(null);
+  const iconConfig = React.useMemo(() => getCategoryIconConfig(title, tab), [title, tab]);
+  const Icon = iconConfig.icon;
 
-  // Deduplicate items safely by ID to prevent any duplicate key errors from API feeds
+  // Deduplicate, filter released-only, and cap at 18 items to keep mobile memory light and responsive
   const uniqueItems = React.useMemo(() => {
     const seen = new Set<string>();
-    return items.filter((it) => {
-      if (!it || !it.id) return false;
-      if (seen.has(it.id)) return false;
+    const res: StremioMetaPreview[] = [];
+    for (const it of items) {
+      if (!it || !it.id) continue;
+      if (seen.has(it.id)) continue;
+      if (!isAlreadyReleased(it)) continue;
       seen.add(it.id);
-      return true;
-    });
+      res.push(it);
+      if (res.length >= 18) break;
+    }
+    return res;
   }, [items]);
 
   const scroll = (direction: 'left' | 'right') => {
@@ -1406,32 +1353,26 @@ const CatalogRow: React.FC<CatalogRowProps> = ({
   }
 
   return (
-    <div className="space-y-3 relative group/row">
-      {/* Row Header with Title on Left and Navigation Controls on Right */}
+    <div className="space-y-3 relative group/row catalog-row-contain">
+      {/* Row Header with Thematic Icon + Title on Left and Navigation Controls on Right */}
       <div className="flex items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            {showRank && (
-              <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-amber-500 via-rose-500 to-red-600 flex items-center justify-center text-white shadow-md shadow-amber-500/25 flex-shrink-0">
-                <Trophy className="w-3.5 h-3.5 fill-current" />
-              </div>
-            )}
-            <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight">
-              {title}
-            </h3>
-            {showRank ? (
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-gradient-to-r from-amber-500/20 to-rose-500/20 text-amber-300 border border-amber-500/35 shadow-sm">
-                TOP 10
-              </span>
-            ) : (
-              badge && (
+        <div className="flex items-center gap-2.5">
+          <div className={`p-1.5 rounded-xl border flex items-center justify-center flex-shrink-0 ${iconConfig.bgClass}`}>
+            <Icon className={`w-4 h-4 ${iconConfig.colorClass}`} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight">
+                {title}
+              </h3>
+              {badge && (
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-600/20 text-rose-300 border border-red-500/30 shadow-sm">
                   {badge}
                 </span>
-              )
-            )}
+              )}
+            </div>
+            {subtitle && <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>}
           </div>
-          {subtitle && <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>}
         </div>
 
         {/* Scroll Controls on the Right side */}
@@ -1460,10 +1401,10 @@ const CatalogRow: React.FC<CatalogRowProps> = ({
       <div className="relative">
         <div
           ref={rowRef}
-          className="flex gap-4 overflow-x-auto pb-4 pt-3.5 sm:pt-4 scroll-smooth scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0"
+          className="flex gap-4 overflow-x-auto pb-6 pt-6 sm:pt-7 scroll-smooth scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0 -mt-2"
         >
           {uniqueItems.length === 0 && loading ? (
-            Array.from({ length: 6 }).map((_, i) => (
+            Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="w-44 sm:w-52 md:w-56 flex-shrink-0 animate-pulse">
                 <div className="aspect-[2/3] rounded-2xl liquid-glass border border-white/10 bg-white/[0.03]" />
                 <div className="h-3.5 bg-white/10 rounded-md mt-2.5 w-3/4" />
@@ -1472,10 +1413,9 @@ const CatalogRow: React.FC<CatalogRowProps> = ({
             ))
           ) : (
             uniqueItems.map((item, index) => (
-              <div key={`${item.id}-${index}`} className="relative w-44 sm:w-52 md:w-56 flex-shrink-0">
+              <div key={`${item.id}-${index}`} className="relative w-44 sm:w-52 md:w-56 flex-shrink-0 pt-1 pb-1">
                 <MediaCard
                   item={item}
-                  rank={showRank && index < 10 ? index + 1 : undefined}
                   onSelect={onSelect}
                   onQuickPlay={onQuickPlay}
                 />
@@ -1486,4 +1426,6 @@ const CatalogRow: React.FC<CatalogRowProps> = ({
       </div>
     </div>
   );
-};
+});
+
+CatalogRow.displayName = 'CatalogRow';

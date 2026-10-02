@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X,
   Play,
@@ -12,13 +12,13 @@ import {
   Award,
   Film,
   Quote,
-  Share2,
   Video,
   Clapperboard,
   Sparkles,
   Calendar,
   Clock,
   Globe,
+  AlertCircle,
 } from 'lucide-react';
 import {
   StremioMetaPreview,
@@ -40,40 +40,145 @@ interface MediaDetailModalProps {
   ) => void;
 }
 
+// Client-side in-memory trailer cache for instant 0ms retrieval on repeated visits
+const trailerClientCache = new Map<string, string>();
+
 export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   item,
   onClose,
   onPlayStream,
 }) => {
-  // Initialize detail immediately to prevent loading delay
+  // Pre-calculate instant poster and backdrop from item to eliminate any render delay
+  const initialPoster = item
+    ? optimizeImageUrl(item.poster, 'poster') ||
+      (item.id?.startsWith('tt') ? `https://images.metahub.space/poster/medium/${item.id}/img` : '')
+    : '';
+  const initialBackground = item
+    ? optimizeImageUrl(item.background, 'background') ||
+      (item.id?.startsWith('tt') ? `https://images.metahub.space/background/medium/${item.id}/img` : initialPoster)
+    : '';
+
+  // Initialize detail immediately with high-res assets to prevent loading delay
   const [detail, setDetail] = useState<StremioMetaDetail | null>(() =>
-    item ? ({ ...item } as StremioMetaDetail) : null
+    item
+      ? ({
+          ...item,
+          poster: initialPoster,
+          background: initialBackground,
+        } as StremioMetaDetail)
+      : null
   );
   const [activeTab, setActiveTab] = useState<'overview' | 'episodes'>('overview');
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [inLibrary, setInLibrary] = useState(false);
   const [isSeasonDropdownOpen, setIsSeasonDropdownOpen] = useState(false);
-  const [copiedShare, setCopiedShare] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [headerProgress, setHeaderProgress] = useState(0);
   const [trailerActive, setTrailerActive] = useState(false);
+  const [fetchedTrailerKey, setFetchedTrailerKey] = useState<string | null>(() => {
+    if (!item) return null;
+    return trailerClientCache.get(item.id) || null;
+  });
+  const [trailerLoading, setTrailerLoading] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const episodeCarouselRef = useRef<HTMLDivElement>(null);
   const seasonDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Track scroll position: starts fading in smoothly from half the cover, 100% visible when Guarda Ora reaches the top
-  const handleScroll = () => {
-    if (scrollContainerRef.current) {
-      const top = scrollContainerRef.current.scrollTop;
-      const isSm = window.innerWidth >= 640;
-      const startFade = isSm ? 160 : 120; // metà della copertina
-      const fullFade = isSm ? 330 : 255;  // quando Guarda Ora arriva in cima
-      const progress = Math.min(1, Math.max(0, (top - startFade) / (fullFade - startFade)));
-      setHeaderProgress(progress);
-      setIsScrolled(progress >= 0.9);
+  // Sync and listen for reactive library changes across all components
+  useEffect(() => {
+    if (!item) return;
+    const currentId = String(item.id || '').trim();
+    setInLibrary(stremioService.isInLibrary(currentId));
+
+    const handleLibraryUpdate = (e: Event) => {
+      const customEv = e as CustomEvent;
+      if (customEv.detail && customEv.detail.id === currentId) {
+        setInLibrary(customEv.detail.inLibrary);
+      } else {
+        setInLibrary(stremioService.isInLibrary(currentId));
+      }
+    };
+
+    window.addEventListener('stremio_library_changed', handleLibraryUpdate);
+    window.addEventListener('storage', handleLibraryUpdate);
+    return () => {
+      window.removeEventListener('stremio_library_changed', handleLibraryUpdate);
+      window.removeEventListener('storage', handleLibraryUpdate);
+    };
+  }, [item?.id]);
+
+  // High-precision Instant YouTube trailer resolver with in-memory cache
+  useEffect(() => {
+    if (!item) return;
+
+    const extractYoutubeKey = (val?: any): string | null => {
+      if (!val) return null;
+      const str = String(val).trim();
+      if (/^[a-zA-Z0-9_-]{11}$/.test(str)) return str;
+      const m = str.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([a-zA-Z0-9_-]{11})/);
+      return m ? m[1] : null;
+    };
+
+    const existingKey =
+      extractYoutubeKey(detail?.trailers?.[0]?.source) ||
+      extractYoutubeKey((detail as any)?.trailer) ||
+      extractYoutubeKey((item as any)?.trailer) ||
+      trailerClientCache.get(item.id) ||
+      trailerClientCache.get(item.name);
+
+    if (existingKey) {
+      setFetchedTrailerKey(existingKey);
+      trailerClientCache.set(item.id, existingKey);
+      setTrailerLoading(false);
+    } else {
+      setTrailerLoading(true);
+      fetch(`/api/youtube-trailer?title=${encodeURIComponent(item.name)}&type=${item.type}&imdbId=${item.id}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && data.videoId) {
+            setFetchedTrailerKey(data.videoId);
+            trailerClientCache.set(item.id, data.videoId);
+            trailerClientCache.set(item.name, data.videoId);
+          }
+          setTrailerLoading(false);
+        })
+        .catch(() => setTrailerLoading(false));
     }
-  };
+  }, [item?.id, item?.name, item?.type, detail?.trailers, (detail as any)?.trailer]);
+
+  // Throttle scroll handling with requestAnimationFrame and step thresholding to prevent continuous re-renders
+  const scrollAnimationFrameRef = useRef<number | null>(null);
+  const lastProgressRef = useRef<number>(0);
+
+  const handleScroll = useCallback(() => {
+    if (scrollAnimationFrameRef.current) return;
+    scrollAnimationFrameRef.current = requestAnimationFrame(() => {
+      scrollAnimationFrameRef.current = null;
+      if (scrollContainerRef.current) {
+        const top = scrollContainerRef.current.scrollTop;
+        const isSm = window.innerWidth >= 640;
+        const startFade = isSm ? 160 : 120;
+        const fullFade = isSm ? 330 : 255;
+        const rawProgress = Math.min(1, Math.max(0, (top - startFade) / (fullFade - startFade)));
+        // Quantize progress to 0.02 steps to eliminate unneeded re-renders
+        const progress = Math.round(rawProgress * 50) / 50;
+        if (Math.abs(progress - lastProgressRef.current) >= 0.02 || progress === 0 || progress === 1) {
+          lastProgressRef.current = progress;
+          setHeaderProgress(progress);
+          setIsScrolled(progress >= 0.9);
+        }
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (scrollAnimationFrameRef.current) {
+        cancelAnimationFrame(scrollAnimationFrameRef.current);
+      }
+    };
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -107,9 +212,18 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
       scrollContainerRef.current.scrollTop = 0;
     }
 
+    const curPoster =
+      optimizeImageUrl(item.poster, 'poster') ||
+      (item.id?.startsWith('tt') ? `https://images.metahub.space/poster/medium/${item.id}/img` : '');
+    const curBackground =
+      optimizeImageUrl(item.background, 'background') ||
+      (item.id?.startsWith('tt') ? `https://images.metahub.space/background/medium/${item.id}/img` : curPoster);
+
     // Instant presentation of item details
     setDetail((prev) => ({
       ...item,
+      poster: curPoster,
+      background: curBackground,
       ...(prev?.id === item.id ? prev : {}),
     } as StremioMetaDetail));
     setInLibrary(stremioService.isInLibrary(item.id));
@@ -117,15 +231,21 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     // Preload stream immediately in background for zero-wait playback
     stremioService.preloadStream(item.type, item.id);
 
-    // Enrich metadata in background
+    // Enrich metadata in background without overwriting valid Italian title or cover
     stremioService
       .fetchMeta(item.type, item.id)
       .then((meta) => {
         if (!meta) return;
-        setDetail((prev) => ({
-          ...prev,
-          ...meta,
-        }));
+        setDetail((prev) => {
+          if (!prev) return meta;
+          return {
+            ...meta,
+            // Preserve canonical localized title and sharp cover
+            name: prev.name || meta.name,
+            poster: meta.poster || prev.poster,
+            background: meta.background || prev.background,
+          };
+        });
         if (meta.type === 'series' && meta.videos && meta.videos.length > 0) {
           const firstSeason = meta.videos[0].season || 1;
           setSelectedSeason(firstSeason);
@@ -138,9 +258,27 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
 
   if (!item) return null;
 
-  const handleLibraryToggle = () => {
-    if (detail) {
-      const state = stremioService.toggleLibraryItem(detail);
+  const handleLibraryToggle = (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    const targetItem = detail || item;
+    if (targetItem) {
+      const targetId = String(item?.id || detail?.id || (targetItem as any)?.imdb_id || '').trim();
+      const cleanItem: StremioMetaPreview = {
+        id: targetId,
+        type: targetItem.type || item?.type || 'movie',
+        name: targetItem.name || item?.name || 'Senza titolo',
+        poster: targetItem.poster || item?.poster || '',
+        background: targetItem.background || item?.background || '',
+        logo: targetItem.logo || item?.logo,
+        releaseInfo: targetItem.releaseInfo || item?.releaseInfo,
+        imdbRating: targetItem.imdbRating || item?.imdbRating,
+        genres: targetItem.genres || item?.genres || [],
+        description: targetItem.description || item?.description,
+      };
+      const state = stremioService.toggleLibraryItem(cleanItem);
       setInLibrary(state);
     }
   };
@@ -154,14 +292,6 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     } else {
       onPlayStream(detail);
     }
-  };
-
-  const handleShare = () => {
-    const url = window.location.href;
-    navigator.clipboard?.writeText(url).then(() => {
-      setCopiedShare(true);
-      setTimeout(() => setCopiedShare(false), 2000);
-    });
   };
 
   // Group series episodes by season number
@@ -200,13 +330,25 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   const globalAverageScore = compositeScoreNum.toFixed(1);
   const globalPercentage = Math.round(compositeScoreNum * 10);
 
-  // Determine trailer URL
-  const trailerSourceKey = detail?.trailers?.[0]?.source;
-  const trailerEmbedUrl = trailerSourceKey
-    ? `https://www.youtube-nocookie.com/embed/${trailerSourceKey}?autoplay=1&rel=0`
-    : `https://www.youtube-nocookie.com/embed?listType=search&list=${encodeURIComponent(
-        (detail?.name || item.name) + ' trailer ufficiale'
-      )}&autoplay=1`;
+  // Determine reliable trailer URL
+  const effectiveTrailerKey =
+    fetchedTrailerKey ||
+    (detail?.trailers?.[0]?.source && /^[a-zA-Z0-9_-]{11}$/.test(detail.trailers[0].source) ? detail.trailers[0].source : null) ||
+    ((detail as any)?.trailer && /^[a-zA-Z0-9_-]{11}$/.test((detail as any).trailer) ? (detail as any).trailer : null);
+
+  const trailerEmbedUrl = effectiveTrailerKey
+    ? `https://www.youtube.com/embed/${effectiveTrailerKey}?autoplay=1&rel=0&playsinline=1&modestbranding=1`
+    : null;
+
+  // Best high-res trailer backdrop image
+  const trailerBackdropImg =
+    detail?.background ||
+    (detail?.id?.startsWith('tt')
+      ? `https://images.metahub.space/background/medium/${detail.id}/img`
+      : null) ||
+    detail?.poster ||
+    item.poster ||
+    'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1200&q=80';
 
   const releaseYear = getReleaseYear(detail?.releaseInfo);
   const genresList = detail?.genres || item.genres || [];
@@ -276,9 +418,10 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   };
 
   const awardBadges = getAwardBadges();
+  const isSeries = detail?.type === 'series';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-hidden bg-black/90 backdrop-blur-2xl animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-hidden bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
       {/* Click outside backdrop */}
       <div className="fixed inset-0" onClick={onClose} />
 
@@ -291,7 +434,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         <div className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between px-5 sm:px-8 py-3.5 pointer-events-none">
           {/* Frosted Background that fades in smoothly based on headerProgress */}
           <div
-            className="absolute inset-0 bg-[#07070d]/95 backdrop-blur-2xl shadow-[0_12px_32px_rgba(0,0,0,0.85)] pointer-events-none transition-opacity duration-150"
+            className="absolute inset-0 bg-[#07070d]/98 backdrop-blur-md shadow-[0_12px_32px_rgba(0,0,0,0.85)] pointer-events-none transition-opacity duration-150"
             style={{ opacity: headerProgress }}
           />
 
@@ -304,17 +447,9 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               pointerEvents: headerProgress > 0.3 ? 'auto' : 'none',
             }}
           >
-            {detail?.logo ? (
-              <img
-                src={detail.logo}
-                alt={detail.name || item.name}
-                className="h-8 max-w-[160px] sm:max-w-[240px] object-contain object-left drop-shadow-md"
-              />
-            ) : (
-              <h3 className="font-poster-logo text-xl sm:text-2xl font-black text-white uppercase tracking-tight truncate drop-shadow-md">
-                {detail?.name || item.name}
-              </h3>
-            )}
+            <h3 className="font-poster-logo text-xl sm:text-2xl font-black text-white uppercase tracking-tight truncate drop-shadow-md">
+              {detail?.name || item.name}
+            </h3>
 
             <div className="hidden sm:flex items-center gap-2 flex-shrink-0">
               <span className="flex items-center gap-1 text-[11px] font-bold text-amber-300 bg-amber-500/20 px-2.5 py-0.5 rounded-full border border-amber-500/35">
@@ -330,7 +465,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
           </div>
 
           {/* Right Action Buttons */}
-          <div className="relative flex items-center gap-2 sm:gap-3 ml-auto pointer-events-auto">
+          <div className="relative flex items-center gap-2 sm:gap-2.5 ml-auto pointer-events-auto">
             {/* Quick Play button inside sticky bar: fades in progressively for movies */}
             {detail?.type !== 'series' && (
               <button
@@ -340,22 +475,22 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                   transform: `scale(${0.92 + headerProgress * 0.08})`,
                   pointerEvents: headerProgress > 0.4 ? 'auto' : 'none',
                 }}
-                className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-black shadow-md shadow-red-600/40 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-black shadow-md transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
                 <span className="hidden sm:inline">Guarda Ora</span>
               </button>
             )}
 
-            {/* Series Tab Switcher incorporated directly near Guarda Ora */}
-            {detail?.type === 'series' && (
-              <div className="flex items-center p-1 rounded-full liquid-glass-transparent border border-white/25 shadow-md">
+            {/* Series Tab Switcher (Panoramica / Episodi) positioned right next to the close button */}
+            {isSeries && (
+              <div className="flex items-center p-0.5 sm:p-1 rounded-full liquid-glass-transparent border border-white/25 shadow-md">
                 <button
                   type="button"
                   onClick={() => setActiveTab('overview')}
-                  className={`px-3 sm:px-3.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                  className={`px-2.5 sm:px-3.5 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
                     activeTab === 'overview'
-                      ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-md shadow-red-600/40'
+                      ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
                       : 'text-slate-300 hover:text-white'
                   }`}
                 >
@@ -364,9 +499,9 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveTab('episodes')}
-                  className={`px-3 sm:px-3.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                  className={`px-2.5 sm:px-3.5 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
                     activeTab === 'episodes'
-                      ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-md shadow-red-600/40'
+                      ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
                       : 'text-slate-300 hover:text-white'
                   }`}
                 >
@@ -395,33 +530,38 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         >
           {/* ================= BACKDROP BANNER ================= */}
           {/* Starts right at top 0, no black band */}
-          <div className="relative h-72 sm:h-96 w-full overflow-hidden flex-shrink-0 bg-black">
+          <div className="relative h-72 sm:h-96 w-full overflow-hidden flex-shrink-0 bg-[#07070e]">
             <img
               src={
                 optimizeImageUrl(detail?.background, 'background') ||
-                optimizeImageUrl(detail?.poster || item.poster, 'poster')
+                (item?.id?.startsWith('tt') ? `https://images.metahub.space/background/medium/${item.id}/img` : null) ||
+                optimizeImageUrl(detail?.poster || item.poster, 'poster') ||
+                (item?.id?.startsWith('tt') ? `https://images.metahub.space/poster/medium/${item.id}/img` : null) ||
+                'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1920&q=85'
               }
               alt={detail?.name || item.name}
+              loading="eager"
+              decoding="sync"
               className="w-full h-full object-cover object-top filter brightness-100 contrast-110 saturate-140 transition-transform duration-700 ease-out hover:scale-105"
             />
 
             {/* AMOLED Multilayer Shadows & Gradients */}
-            <div className="absolute inset-0 bg-gradient-to-t from-[#050508] via-[#050508]/50 to-transparent" />
-            <div className="absolute inset-0 bg-gradient-to-r from-[#050508]/85 via-[#050508]/30 to-transparent sm:w-3/4" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#050508] via-[#050508]/50 to-transparent pointer-events-none" />
+            <div className="absolute inset-0 bg-gradient-to-r from-[#050508]/85 via-[#050508]/30 to-transparent sm:w-3/4 pointer-events-none" />
 
-            {/* Pillola Film / Serie TV fissa in alto a sinistra della copertina (rimane su e svanisce scorrendo giù) */}
-            <div className="absolute top-4 sm:top-5 left-5 sm:left-8 z-20 pointer-events-none select-none">
+            {/* Pillola Film / Serie TV fissa in alto a sinistra della copertina */}
+            <div className="absolute top-3.5 sm:top-5 left-4 sm:left-8 z-20 pointer-events-none select-none">
               <span
-                className={`px-3.5 py-1.5 rounded-full liquid-glass-transparent text-xs font-bold uppercase tracking-wider backdrop-blur-xl shadow-lg flex items-center gap-1.5 ${
+                className={`px-2.5 sm:px-3.5 py-0.5 sm:py-1.5 rounded-full liquid-glass-transparent text-[10px] sm:text-xs font-bold uppercase tracking-wider backdrop-blur-xl shadow-md flex items-center gap-1 ${
                   detail?.type === 'series'
                     ? 'border border-purple-500/40 text-purple-300'
                     : 'border border-rose-500/40 text-rose-300'
                 }`}
               >
                 {detail?.type === 'series' ? (
-                  <Tv className="w-3.5 h-3.5 text-purple-400" />
+                  <Tv className="w-3 h-3 text-purple-400" />
                 ) : (
-                  <Film className="w-3.5 h-3.5 text-rose-400" />
+                  <Film className="w-3 h-3 text-rose-400" />
                 )}
                 <span>{detail?.type === 'series' ? 'Serie TV' : 'Film'}</span>
               </span>
@@ -430,20 +570,10 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
             {/* Title and Unified Metadata inside Banner */}
             <div className="absolute bottom-5 sm:bottom-7 left-5 right-5 sm:left-8 sm:right-8 flex flex-col sm:flex-row sm:items-end justify-between gap-5 z-20">
               <div className="max-w-3xl space-y-2.5">
-                {/* Title / Poster Graphic in authentic locandina font */}
-                {detail?.logo ? (
-                  <div className="py-1">
-                    <img
-                      src={detail.logo}
-                      alt={detail.name || item.name}
-                      className="h-14 sm:h-20 md:h-24 max-w-[85vw] sm:max-w-xl object-contain object-left drop-shadow-[0_8px_20px_rgba(0,0,0,0.95)]"
-                    />
-                  </div>
-                ) : (
-                  <h2 className="font-poster-logo text-3xl sm:text-5xl md:text-6xl font-black tracking-tight leading-none drop-shadow-[0_6px_25px_rgba(0,0,0,0.95)]">
-                    {detail?.name || item.name}
-                  </h2>
-                )}
+                {/* Instant cinematic title */}
+                <h2 className="font-poster-logo text-3xl sm:text-5xl md:text-6xl font-black tracking-tight leading-none drop-shadow-[0_6px_25px_rgba(0,0,0,0.95)] uppercase text-white">
+                  {detail?.name || item.name}
+                </h2>
 
                 {/* Unified Media Metadata Row: Media, Anno, Categoria sotto il titolo */}
                 <div className="flex items-center gap-2 flex-wrap text-xs pt-1">
@@ -479,37 +609,30 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 )}
               </div>
 
-              {/* Quick Action Buttons: Riproduci, Aggiungi alla Libreria, Condividi */}
+              {/* Quick Action Buttons: Aggiungi alla Libreria, Riproduci / Episodi */}
               <div className="flex items-center gap-3 flex-shrink-0">
                 <button
-                  onClick={handleShare}
-                  className="w-11 h-11 rounded-2xl liquid-glass-transparent hover:bg-white/20 text-slate-300 hover:text-white border border-white/25 flex items-center justify-center transition-all cursor-pointer shadow-lg"
-                  title="Condividi"
-                >
-                  {copiedShare ? (
-                    <Check className="w-5 h-5 text-emerald-400" />
-                  ) : (
-                    <Share2 className="w-5 h-5" />
-                  )}
-                </button>
-
-                <button
+                  type="button"
                   onClick={handleLibraryToggle}
-                  className={`flex items-center gap-1.5 px-4 py-3 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer shadow-lg ${
+                  className={`flex items-center gap-2 px-5 py-3 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer shadow-lg active:scale-95 ${
                     inLibrary
                       ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 shadow-emerald-500/20'
                       : 'liquid-glass-transparent hover:bg-white/20 text-slate-200 hover:text-white border border-white/25'
                   }`}
                   title={inLibrary ? 'Rimuovi dalla Libreria' : 'Aggiungi alla Libreria'}
                 >
-                  {inLibrary ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                  {inLibrary ? (
+                    <Check className="w-4 h-4 text-emerald-400 stroke-[2.5]" />
+                  ) : (
+                    <Plus className="w-4 h-4 text-white" />
+                  )}
                   <span>{inLibrary ? 'In Libreria' : 'Aggiungi alla Libreria'}</span>
                 </button>
 
-                {detail?.type === 'series' ? (
+                 {detail?.type === 'series' ? (
                   <button
                     onClick={() => setActiveTab('episodes')}
-                    className="flex items-center gap-2.5 px-7 py-3 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide shadow-xl shadow-red-600/40 hover:shadow-red-500/60 transition-all duration-200 hover:scale-[1.02] active:scale-95 cursor-pointer"
+                    className="flex items-center gap-2.5 px-7 py-3 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-sm tracking-wide shadow-xl transition-all duration-200 hover:scale-[1.02] active:scale-95 cursor-pointer"
                   >
                     <Tv className="w-4 h-4 text-white" />
                     <span>Episodi</span>
@@ -517,7 +640,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 ) : (
                   <button
                     onClick={handlePrimaryPlay}
-                    className="flex items-center gap-2.5 px-7 py-3 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide shadow-xl shadow-red-600/40 hover:shadow-red-500/60 transition-all duration-200 hover:scale-[1.02] active:scale-95 cursor-pointer"
+                    className="flex items-center gap-2.5 px-7 py-3 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 text-white font-black text-sm tracking-wide shadow-xl transition-all duration-200 hover:scale-[1.02] active:scale-95 cursor-pointer"
                   >
                     <Play className="w-4 h-4 fill-current ml-0.5" />
                     <span>Guarda Ora</span>
@@ -538,7 +661,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 {/* 1. TRAMA / SINOSSI UFFICIALE */}
                 {detail?.description && (
                   <div className="space-y-2.5 p-5 sm:p-6 rounded-2xl liquid-bubble-glass border border-white/10 shadow-lg">
-                    <div className="flex items-center gap-2 text-rose-400 text-xs font-bold uppercase tracking-wider">
+                    <div className={`flex items-center gap-2 ${isSeries ? 'text-purple-400' : 'text-rose-400'} text-xs font-bold uppercase tracking-wider`}>
                       <Quote className="w-4 h-4" />
                       <span>Sinossi Ufficiale</span>
                     </div>
@@ -552,40 +675,83 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                      <Video className="w-4 h-4 text-rose-400" />
+                      <Video className={`w-4 h-4 ${isSeries ? 'text-purple-400' : 'text-rose-400'}`} />
                       <span>Trailer Ufficiale</span>
                     </h4>
                   </div>
 
                   <div className="relative aspect-video w-full rounded-2xl overflow-hidden liquid-glass border border-white/15 bg-black/90 shadow-2xl">
                     {trailerActive ? (
-                      <iframe
-                        src={trailerEmbedUrl}
-                        title={`Trailer di ${detail?.name || item.name}`}
-                        className="w-full h-full border-0"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                        allowFullScreen
-                      />
+                      <div className="relative w-full h-full bg-black">
+                        {trailerEmbedUrl ? (
+                          <>
+                            <iframe
+                              src={trailerEmbedUrl}
+                              title={`Trailer di ${detail?.name || item.name}`}
+                              className="w-full h-full border-0"
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                              allowFullScreen
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setTrailerActive(false)}
+                              className="absolute top-3 right-3 z-30 px-3 py-1.5 rounded-xl bg-black/80 hover:bg-rose-600 text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-md border border-white/20 shadow-xl transition-all cursor-pointer"
+                              title="Chiudi trailer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>Chiudi trailer</span>
+                            </button>
+                          </>
+                        ) : trailerLoading ? (
+                          <div className="flex flex-col items-center justify-center h-full p-6 text-center space-y-3 bg-[#0a0a14]">
+                            <div className="w-10 h-10 rounded-full border-2 border-rose-500 border-t-transparent animate-spin" />
+                            <p className="text-xs sm:text-sm text-slate-200 font-bold">
+                              Avvio trailer in corso...
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full p-6 text-center space-y-3 bg-[#0a0a14]">
+                            <div className="w-14 h-14 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shadow-lg shadow-rose-500/10">
+                              <AlertCircle className="w-7 h-7 stroke-[2]" />
+                            </div>
+                            <h4 className="text-base sm:text-lg font-black text-white tracking-tight">Trailer non disponibile</h4>
+                            <p className="text-xs text-slate-400 max-w-sm leading-relaxed">
+                              Spiacenti, nessun trailer ufficiale disponibile per questo contenuto.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setTrailerActive(false)}
+                              className="mt-2 px-5 py-2 rounded-xl liquid-glass-transparent hover:bg-white/10 text-white text-xs font-bold border border-white/20 transition-all cursor-pointer shadow-md"
+                            >
+                              Torna alla locandina
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <div
                         onClick={() => setTrailerActive(true)}
                         className="group relative w-full h-full cursor-pointer overflow-hidden flex items-center justify-center"
                       >
                         <img
-                          src={detail?.background || detail?.poster || item.poster}
+                          src={optimizeImageUrl(trailerBackdropImg, 'background') || trailerBackdropImg}
                           alt={`Trailer di ${detail?.name || item.name}`}
-                          className="w-full h-full object-cover filter brightness-70 group-hover:scale-105 group-hover:brightness-85 transition-all duration-500"
+                          className="w-full h-full object-cover filter brightness-75 group-hover:scale-105 group-hover:brightness-90 transition-all duration-500"
                         />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/35 to-transparent" />
 
-                        {/* Central Play Badge */}
-                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-                          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-tr from-red-600 via-rose-600 to-red-500 text-white flex items-center justify-center shadow-2xl shadow-red-600/70 group-hover:scale-110 active:scale-95 transition-all duration-300 border border-white/30 backdrop-blur-md">
-                            <Play className="w-8 h-8 fill-white ml-1" />
+                        {/* Central Play Badge in Pantone 11420 (#F0EEE9) - Only Play button, no text below */}
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div
+                            className="w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center shadow-2xl group-hover:scale-110 active:scale-95 transition-all duration-300 border border-white/50 backdrop-blur-md cursor-pointer"
+                            style={{
+                              backgroundColor: '#F0EEE9',
+                              boxShadow: '0 10px 35px rgba(240, 238, 233, 0.45), 0 0 20px rgba(255, 255, 255, 0.3)',
+                            }}
+                            title="Riproduci trailer"
+                          >
+                            <Play className="w-8 h-8 fill-[#111827] text-[#111827] ml-1" />
                           </div>
-                          <span className="text-xs sm:text-sm font-bold text-white bg-black/75 px-4 py-1.5 rounded-full border border-white/20 backdrop-blur-md shadow-xl group-hover:border-rose-400 transition-colors">
-                            Riproduci Trailer Ufficiale
-                          </span>
                         </div>
                       </div>
                     )}
@@ -622,11 +788,8 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-amber-400" />
-                        <span className="text-xs font-black uppercase tracking-wider text-rose-300 font-mono">
+                        <span className={`text-xs font-black uppercase tracking-wider font-mono ${isSeries ? 'text-purple-300' : 'text-rose-300'}`}>
                           Media Voti Complessiva
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/35">
-                          Tutte le Fonti
                         </span>
                       </div>
                       <p className="text-xs text-slate-300">
@@ -686,7 +849,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h4 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                      <Clapperboard className="w-4 h-4 text-rose-400" />
+                      <Clapperboard className={`w-4 h-4 ${isSeries ? 'text-purple-400' : 'text-rose-400'}`} />
                       <span>Dettagli Tecnici & Troupe</span>
                     </h4>
                   </div>
@@ -695,10 +858,10 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                     {/* Regia - Hero Spotlight */}
                     {detail?.director && detail.director.length > 0 && (
-                      <div className="p-4 sm:p-5 rounded-2xl liquid-glass-rank border border-white/20 space-y-1.5 shadow-lg bg-gradient-to-br from-red-950/30 via-black/40 to-black/60">
+                      <div className={`p-4 sm:p-5 rounded-2xl liquid-glass-rank border border-white/20 space-y-1.5 shadow-lg ${isSeries ? 'bg-gradient-to-br from-purple-950/30 via-black/40 to-black/60' : 'bg-gradient-to-br from-red-950/30 via-black/40 to-black/60'}`}>
                         <div className="flex items-center gap-2">
-                          <Clapperboard className="w-4 h-4 text-rose-400" />
-                          <span className="text-rose-400 font-black uppercase tracking-widest text-[11px] font-mono">
+                          <Clapperboard className={`w-4 h-4 ${isSeries ? 'text-purple-400' : 'text-rose-400'}`} />
+                          <span className={`${isSeries ? 'text-purple-400' : 'text-rose-400'} font-black uppercase tracking-widest text-[11px] font-mono`}>
                             Direzione & Regia
                           </span>
                         </div>
@@ -727,7 +890,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                   {/* Second Tier: Quick Metadata Ribbon (Anno, Durata, Origine, Generi) */}
                   <div className="p-3.5 rounded-2xl liquid-bubble-glass border border-white/10 flex flex-wrap items-center gap-4 text-xs">
                     <div className="flex items-center gap-1.5 text-slate-300">
-                      <Calendar className="w-3.5 h-3.5 text-rose-400" />
+                      <Calendar className={`w-3.5 h-3.5 ${isSeries ? 'text-purple-400' : 'text-rose-400'}`} />
                       <span className="text-slate-400">Anno:</span>
                       <span className="font-bold text-white">{releaseYear || 'N/D'}</span>
                     </div>
@@ -735,7 +898,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                     <div className="h-3 w-px bg-white/15" />
 
                     <div className="flex items-center gap-1.5 text-slate-300">
-                      <Clock className="w-3.5 h-3.5 text-rose-400" />
+                      <Clock className={`w-3.5 h-3.5 ${isSeries ? 'text-purple-400' : 'text-rose-400'}`} />
                       <span className="text-slate-400">
                         {detail?.type === 'series' ? 'Formato:' : 'Durata:'}
                       </span>
@@ -752,7 +915,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                       <>
                         <div className="h-3 w-px bg-white/15" />
                         <div className="flex items-center gap-1.5 text-slate-300">
-                          <Globe className="w-3.5 h-3.5 text-rose-400" />
+                          <Globe className={`w-3.5 h-3.5 ${isSeries ? 'text-purple-400' : 'text-rose-400'}`} />
                           <span className="text-slate-400">Origine:</span>
                           <span className="font-bold text-white">{detail.country}</span>
                         </div>
@@ -787,9 +950,9 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                         {detail.cast.map((actor) => (
                           <div
                             key={actor}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-slate-200 text-xs font-medium hover:border-rose-400/50 hover:bg-white/10 transition-colors"
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-slate-200 text-xs font-medium ${isSeries ? 'hover:border-purple-400/50' : 'hover:border-rose-400/50'} hover:bg-white/10 transition-colors`}
                           >
-                            <div className="w-5 h-5 rounded-full bg-rose-600/30 text-rose-300 flex items-center justify-center font-bold text-[10px]">
+                            <div className={`w-5 h-5 rounded-full ${isSeries ? 'bg-purple-600/30 text-purple-300' : 'bg-rose-600/30 text-rose-300'} flex items-center justify-center font-bold text-[10px]`}>
                               {actor.charAt(0)}
                             </div>
                             <span>{actor}</span>
@@ -820,11 +983,11 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                         }`}
                       >
                         <span className="flex items-center gap-2">
-                          <Tv className="w-3.5 h-3.5 text-rose-400" />
+                          <Tv className="w-3.5 h-3.5 text-purple-400" />
                           <span>Stagione {selectedSeason}</span>
                         </span>
                         <ChevronDown
-                          className={`w-4 h-4 text-rose-400 transition-transform duration-200 ${
+                          className={`w-4 h-4 text-purple-400 transition-transform duration-200 ${
                             isSeasonDropdownOpen ? 'rotate-180' : ''
                           }`}
                         />
@@ -850,14 +1013,14 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                                   }}
                                   className={`w-full flex items-center justify-between px-4 py-2.5 text-xs font-semibold transition-colors cursor-pointer text-left ${
                                     isSelected
-                                      ? 'bg-rose-600/30 text-white font-bold border-l-2 border-rose-500'
+                                      ? 'bg-purple-600/30 text-white font-bold border-l-2 border-purple-500'
                                       : 'text-slate-300 hover:text-white hover:bg-white/[0.08]'
                                   }`}
                                 >
                                   <span>Stagione {s}</span>
                                   <span
                                     className={`text-[10px] ${
-                                      isSelected ? 'text-rose-200' : 'text-slate-400'
+                                      isSelected ? 'text-purple-300' : 'text-slate-400'
                                     }`}
                                   >
                                     {epCount} ep
@@ -872,20 +1035,20 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                   )}
 
                   {/* Standalone Carousel Left/Right Scroll Arrows Pill (Perfect Rounded Full in transparent liquid glass) */}
-                  <div className="flex items-center gap-1 p-1 rounded-full liquid-glass-transparent border border-white/25 shadow-md">
+                  <div className="flex items-center gap-1 p-1 rounded-full liquid-glass-transparent border border-purple-500/30 shadow-md">
                     <button
                       type="button"
                       onClick={() => scrollEpisodes('left')}
-                      className="w-8 h-8 rounded-full text-white/90 hover:text-white hover:bg-white/20 flex items-center justify-center transition-all cursor-pointer hover:scale-105 active:scale-95"
+                      className="w-8 h-8 rounded-full text-white/90 hover:text-white hover:bg-purple-600/30 flex items-center justify-center transition-all cursor-pointer hover:scale-105 active:scale-95"
                       title="Scorri indietro"
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <div className="w-px h-4 bg-white/20" />
+                    <div className="w-px h-4 bg-purple-500/30" />
                     <button
                       type="button"
                       onClick={() => scrollEpisodes('right')}
-                      className="w-8 h-8 rounded-full text-white/90 hover:text-white hover:bg-white/20 flex items-center justify-center transition-all cursor-pointer hover:scale-105 active:scale-95"
+                      className="w-8 h-8 rounded-full text-white/90 hover:text-white hover:bg-purple-600/30 flex items-center justify-center transition-all cursor-pointer hover:scale-105 active:scale-95"
                       title="Scorri avanti"
                     >
                       <ChevronRight className="w-4 h-4" />
@@ -905,9 +1068,9 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                       detail.poster ||
                       item.poster;
 
-                    const epYear = getReleaseYear(vid.released) || releaseYear;
                     const epNum = vid.episode || vidIdx + 1;
-                    const rawTitle = vid.title?.trim() || '';
+                    const rawTitle = (vid.title || vid.name || '').trim();
+                    const epOverview = vid.overview || vid.description || vid.summary || '';
 
                     // Check if title is generic
                     const isGenericTitle =
@@ -927,7 +1090,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                       <div
                         key={`${vid.id || 'ep'}-${vid.season || selectedSeason}-${epNum}-${vidIdx}`}
                         onClick={() => onPlayStream(detail, undefined, vid)}
-                        className="group w-72 sm:w-84 flex-shrink-0 snap-start flex flex-col rounded-2xl liquid-glass-card border border-white/10 hover:border-rose-500/50 overflow-hidden cursor-pointer transition-all duration-300 shadow-xl hover:shadow-[0_8px_30px_rgba(225,29,72,0.3)]"
+                        className="group w-72 sm:w-84 flex-shrink-0 snap-start flex flex-col rounded-2xl liquid-glass-card border border-white/10 hover:border-purple-500/60 overflow-hidden cursor-pointer transition-all duration-300 shadow-xl hover:shadow-[0_8px_30px_rgba(168,85,247,0.35)]"
                       >
                         {/* 16:9 Episode Thumbnail */}
                         <div className="relative aspect-video w-full overflow-hidden bg-slate-900 flex-shrink-0">
@@ -941,31 +1104,35 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
 
                           {/* Liquid Glass Episode Badge in Top-Left */}
                           <div className="absolute top-2.5 left-2.5 pointer-events-none select-none">
-                            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full liquid-bubble-glass border border-white/25 shadow-lg shadow-black/80 backdrop-blur-xl">
-                              <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.9)] animate-pulse" />
-                              <span className="text-[11px] font-black tracking-wider text-white font-mono uppercase">
+                            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full liquid-bubble-glass border border-purple-500/40 shadow-lg shadow-black/80 backdrop-blur-xl">
+                              <span className="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.9)] animate-pulse" />
+                              <span className="text-[11px] font-black tracking-wider text-purple-200 font-mono uppercase">
                                 EP. {epNum}
                               </span>
                             </div>
                           </div>
 
-                          {/* Center Play Button Overlay on Hover */}
+                          {/* Center Play Button Overlay on Hover in TV series purple */}
                           <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                            <div className="w-12 h-12 rounded-full bg-rose-600 text-white flex items-center justify-center shadow-lg shadow-rose-600/50 group-hover:scale-110 transition-transform">
+                            <div className="w-12 h-12 rounded-full bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-lg shadow-purple-600/60 group-hover:scale-110 transition-transform">
                               <Play className="w-5 h-5 fill-current ml-0.5" />
                             </div>
                           </div>
                         </div>
 
-                        {/* Episode Info: Title & Description (senza stagione ed episodio sotto) */}
+                        {/* Episode Info: Title & Description */}
                         <div className="p-4 flex-1 flex flex-col justify-between space-y-2">
                           <div>
-                            <h5 className="text-sm font-bold text-white group-hover:text-rose-200 transition-colors line-clamp-1">
+                            {/* Explicit Episodio 1, Episodio 2 badge in series TV color */}
+                            <div className="text-[11px] font-black text-purple-400 uppercase tracking-wider mb-1">
+                              Episodio {epNum}
+                            </div>
+                            <h5 className="text-sm font-bold text-white group-hover:text-purple-200 transition-colors line-clamp-1">
                               {cleanTitle}
                             </h5>
-                            {vid.overview ? (
+                            {epOverview ? (
                               <p className="text-xs text-slate-300/85 line-clamp-3 leading-relaxed mt-1">
-                                {vid.overview}
+                                {epOverview}
                               </p>
                             ) : (
                               <p className="text-xs text-slate-500 italic mt-1">

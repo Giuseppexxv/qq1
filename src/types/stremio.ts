@@ -52,11 +52,14 @@ export interface StremioMetaPreview {
 export interface StremioVideo {
   id: string; // e.g. tt0944947:1:1
   title: string;
+  name?: string;
   released?: string;
   season?: number;
   episode?: number;
   thumbnail?: string;
   overview?: string;
+  description?: string;
+  summary?: string;
   streams?: StremioStream[];
 }
 
@@ -82,10 +85,11 @@ export interface StremioStream {
   url?: string; // direct mp4 / hls / webm stream URL
   externalUrl?: string;
   ytId?: string; // YouTube video ID
+  headers?: Record<string, string>;
   behaviorHints?: {
     notWebReady?: boolean;
     bingeGroup?: string;
-    proxyHeaders?: Record<string, string>;
+    proxyHeaders?: Record<string, string> | { request?: Record<string, string> };
     videoHash?: string;
   };
 }
@@ -114,11 +118,16 @@ export interface WatchHistoryItem {
   type: string;
   name: string;
   poster?: string;
+  background?: string;
+  banner?: string;
+  genres?: string[];
   timestamp: number;
   duration?: number;
   currentTime?: number;
+  progress?: number;
   lastWatched: number;
   streamName?: string;
+  videoId?: string;
   episodeTitle?: string;
   season?: number;
   episode?: number;

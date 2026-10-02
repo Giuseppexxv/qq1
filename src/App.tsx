@@ -6,6 +6,8 @@ import { CatalogBrowser } from './components/CatalogBrowser';
 import { LibraryView } from './components/LibraryView';
 import { MediaDetailModal } from './components/MediaDetailModal';
 import { LiquidPlayer } from './components/LiquidPlayer';
+import { LiveChannel } from './services/liveTvService';
+import { LiveStreamPlayerModal } from './components/LiveStreamPlayerModal';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<ViewTab>('discover');
@@ -14,59 +16,73 @@ export default function App() {
   // Selected media for detail modal
   const [selectedMedia, setSelectedMedia] = useState<StremioMetaPreview | null>(null);
 
-  // Active playing stream session
+  // Active playing stream session (Movies / Series)
   const [activePlayback, setActivePlayback] = useState<{
     media: StremioMetaDetail;
     stream?: StremioStream | null;
     video?: StremioVideo;
   } | null>(null);
 
-  const handlePlayStream = (
+  // Active playing live TV channel session
+  const [activeLiveChannel, setActiveLiveChannel] = useState<LiveChannel | null>(null);
+
+  const handlePlayStream = React.useCallback((
     media: StremioMetaDetail,
     stream?: StremioStream,
     video?: StremioVideo
   ) => {
+    setActiveLiveChannel(null);
     setActivePlayback({ media, stream: stream || null, video });
-  };
+  }, []);
+
+  const handleSelectMedia = React.useCallback((item: StremioMetaPreview) => {
+    setSelectedMedia(item);
+  }, []);
+
+  const isPlayerActive = activePlayback !== null || activeLiveChannel !== null;
 
   return (
     <div className="relative min-h-screen bg-black text-slate-100 flex flex-col selection:bg-red-600/30 selection:text-rose-200">
-      {/* Dynamic Liquid Ambient Background */}
-      <LiquidBackground />
+      {/* Background and Navbar are unmounted during playback to put the rest of the site in zero-resource standby mode */}
+      {!isPlayerActive && <LiquidBackground />}
 
-      {/* Floating Glass Navigation Bar */}
-      <Navbar
-        currentTab={currentTab}
-        onSelectTab={(tab) => {
-          setCurrentTab(tab);
-          setSearchQuery('');
-        }}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-      />
+      {!isPlayerActive && (
+        <Navbar
+          currentTab={currentTab}
+          onSelectTab={(tab) => {
+            setCurrentTab(tab);
+            setSearchQuery('');
+          }}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+        />
+      )}
 
-      {/* Main Viewport */}
-      <main className="relative z-10 flex-1">
-        {(currentTab === 'discover' || currentTab === 'movies' || currentTab === 'series') && (
+      {/* Main Viewport: kept in standby hidden state during active playback to conserve RAM and CPU */}
+      <main className={`relative z-10 flex-1 ${isPlayerActive ? 'hidden' : 'block'}`}>
+        <div className={currentTab === 'library' ? 'hidden' : 'block'}>
           <CatalogBrowser
-            key={currentTab}
-            tab={currentTab}
+            tab={currentTab === 'library' ? 'discover' : currentTab}
             searchQuery={searchQuery}
-            onSelectMedia={(item) => setSelectedMedia(item)}
+            onSearchChange={setSearchQuery}
+            onSelectMedia={handleSelectMedia}
             onPlayStream={handlePlayStream}
+            onPlayLiveChannel={(channel) => {
+              setActiveLiveChannel(channel);
+            }}
           />
-        )}
+        </div>
 
-        {currentTab === 'library' && (
+        <div className={currentTab === 'library' ? 'block' : 'hidden'}>
           <LibraryView
-            onSelectMedia={(item) => setSelectedMedia(item)}
+            onSelectMedia={handleSelectMedia}
             onPlayStream={handlePlayStream}
           />
-        )}
+        </div>
       </main>
 
       {/* Media Detail & Streams Modal */}
-      {selectedMedia && (
+      {!isPlayerActive && selectedMedia && (
         <MediaDetailModal
           item={selectedMedia}
           onClose={() => setSelectedMedia(null)}
@@ -77,13 +93,21 @@ export default function App() {
         />
       )}
 
-      {/* Integrated Liquid Video Player */}
+      {/* Movies / Series Player */}
       {activePlayback && (
         <LiquidPlayer
           media={activePlayback.media}
           stream={activePlayback.stream}
           video={activePlayback.video}
           onClose={() => setActivePlayback(null)}
+        />
+      )}
+
+      {/* Live TV Player Modal */}
+      {activeLiveChannel && (
+        <LiveStreamPlayerModal
+          channel={activeLiveChannel}
+          onClose={() => setActiveLiveChannel(null)}
         />
       )}
     </div>

@@ -1,6 +1,13 @@
 @import "tailwindcss";
 
 @layer base {
+  html, body, #root {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    min-height: 100%;
+  }
+
   body {
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   }
@@ -235,3 +242,146 @@
 .animate-liquid-2 {
   animation: liquid-float-2 22s ease-in-out infinite;
 }
+
+/* GPU & Memory Performance Utilities */
+.contain-paint {
+  /* No paint clipping to avoid truncating hover lifts or glows */
+}
+
+.carousel-card-contain {
+  content-visibility: auto;
+  contain-intrinsic-size: 200px 300px;
+}
+
+.catalog-row-contain {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 360px;
+}
+
+/* Mobile Thermal & Battery Optimization: Reduce heavy GPU backdrop-filter blur on touch devices */
+@media (max-width: 768px) {
+  .liquid-glass,
+  .liquid-glass-elevated,
+  .liquid-bubble-glass,
+  .liquid-glass-transparent,
+  .liquid-glass-transparent-dark,
+  .liquid-glass-dropdown,
+  .liquid-glass-rank {
+    backdrop-filter: blur(8px) !important;
+    -webkit-backdrop-filter: blur(8px) !important;
+  }
+
+  /* Disable continuous heavy background float animations on mobile to prevent phone heating */
+  .animate-liquid-1,
+  .animate-liquid-2 {
+    animation: none !important;
+  }
+}
+
+/* Zero-JS Smooth Hero Slide Progress Bar Animation */
+@keyframes hero-progress-bar {
+  0% {
+    width: 0%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+.animate-hero-progress {
+  animation: hero-progress-bar 5000ms linear forwards;
+}
+
+/* ========================================================
+   PURE INFLATED BLOWN GLASS LOGO (No Pill / No Capsule)
+   All-Caps, Monolithic, Powerful Unique Design
+   Translucent, soft, inflated 3D blown glass that illuminates
+   and refracts colors as it scrolls over posters
+======================================================== */
+.pure-inflated-glass-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  padding: 0;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pure-inflated-glass-wrapper:hover {
+  transform: translateY(-1px) scale(1.04);
+}
+
+.pure-inflated-glass-logo {
+  font-family: 'Unbounded', 'Outfit', sans-serif;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  display: inline-block;
+  position: relative;
+  user-select: none;
+  border: none !important;
+  outline: none !important;
+  -webkit-text-stroke: 0 !important;
+
+  /* Transparent ultra-glossy glass body allowing underlying posters to be seen through */
+  background: linear-gradient(
+    125deg,
+    rgba(255, 255, 255, 0.45) 0%,
+    rgba(255, 255, 255, 0.16) 24%,
+    rgba(255, 255, 255, 0.04) 42%,
+    rgba(255, 255, 255, 0.96) 50%,
+    rgba(255, 255, 255, 0.04) 58%,
+    rgba(255, 255, 255, 0.16) 76%,
+    rgba(255, 255, 255, 0.45) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: glassCausticGleam 6s ease-in-out infinite;
+
+  /* Brilliant glossy glass optical reflections without any outline contour */
+  filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 16px rgba(255, 255, 255, 0.45));
+  transition: filter 0.3s ease;
+}
+
+.pure-inflated-glass-wrapper:hover .pure-inflated-glass-logo {
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.65)) drop-shadow(0 0 26px rgba(255, 255, 255, 0.8));
+}
+
+@keyframes glassCausticGleam {
+  0% {
+    background-position: 100% 50%;
+  }
+  50% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Responsive Nav: Desktop Centered Nav vs Mobile Nav (including mobile landscape) */
+@media (min-width: 768px) and (min-height: 521px) {
+  .nav-desktop-only {
+    display: flex !important;
+  }
+  .nav-mobile-only {
+    display: none !important;
+  }
+}
+
+@media (max-width: 767px), (max-height: 520px) {
+  .nav-desktop-only {
+    display: none !important;
+  }
+  .nav-mobile-only {
+    display: flex !important;
+  }
+}
+
+
